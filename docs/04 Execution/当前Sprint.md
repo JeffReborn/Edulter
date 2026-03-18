@@ -179,15 +179,15 @@
 9. 前端可看到处理状态
 
 ### 任务
-- [ ] 实现 `POST /api/documents/upload`
-- [ ] 接入对象存储
-- [ ] 完成文件类型校验
+- [x] 实现 `POST /api/documents/upload`
+- [x] 接入对象存储
+- [x] 完成文件类型校验
 - [ ] 完成至少一种格式的文本提取
 - [ ] 完成 chunking
 - [ ] 完成 embedding 生成或接口预留
-- [ ] 写入 `knowledge_documents`
+- [x] 写入 `knowledge_documents`
 - [ ] 写入 `document_chunks`
-- [ ] 完成文档状态流转
+- [x] 完成文档状态流转
 - [ ] 完成上传表单 UI
 - [ ] 完成文档状态展示 UI
 - [ ] 增加上传失败提示
