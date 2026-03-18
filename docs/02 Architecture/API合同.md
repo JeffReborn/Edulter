@@ -1,0 +1,572 @@
+
+## 文档状态
+状态：Draft  
+版本：v0.1  
+所属阶段：Demo  
+最后更新：2026-03-16
+
+---
+
+## 一、文档目标
+
+定义教育咨询顾问助手 Demo 阶段的核心 API 输入、输出和约束，确保：
+
+- 前后端联调有统一标准
+- Cursor 有清晰的接口开发边界
+- AI 输出可以被前端稳定消费
+- 后续即使前后端拆分，接口契约仍然可延续
+
+---
+
+## 二、当前接口设计前提
+
+### 1. 当前采用单项目全栈架构
+当前阶段采用：
+
+- 一个 Next.js 项目
+- 页面与 API 在同一工程中
+- 前后端逻辑分层，但物理上不拆仓
+
+### 2. 接口设计要兼容未来拆分
+虽然当前不做前后端双项目，但 API 命名、请求结构、响应结构应保持清晰，避免未来拆分时重做契约。
+
+### 3. API 优先服务 Demo 闭环
+当前接口只围绕以下闭环设计：
+
+1. 上传内部资料
+2. 知识问答
+3. 粘贴聊天记录提取客户画像
+4. 生成跟进消息
+5. 查看客户记录列表与详情
+
+---
+
+## 三、设计原则
+
+### 1. 按业务模块拆分接口
+当前 API 主要按以下模块划分：
+
+- documents
+- qa
+- profiles
+- followups
+- clients
+
+### 2. 响应结构稳定
+前端不能直接消费模型原始输出，而应消费后端结构化后的标准响应。
+
+### 3. 输入必须校验
+所有 POST 接口都应进行参数校验，建议统一使用 Zod。
+
+### 4. 错误必须标准化
+错误响应必须统一格式，便于前端展示和后续调试。
+
+### 5. AI 输出必须过后端清洗
+客户画像、跟进消息、问答出处等结果不能让模型“想怎么回就怎么回”，必须先经后端整理。
+
+---
+
+## 四、统一响应结构
+
+### 成功响应格式
+
+- `success`: 固定为 `true`
+- `data`: 业务数据主体
+
+示意：
+
+- success
+- data
+
+### 失败响应格式
+
+- `success`: 固定为 `false`
+- `error.code`: 错误码
+- `error.message`: 用户可读的错误信息
+
+示意：
+
+- success
+- error
+  - code
+  - message
+
+---
+
+## 五、API 列表总览
+
+### Documents
+- `POST /api/documents/upload`
+- `GET /api/documents`
+- `GET /api/documents/:id`
+
+### QA
+- `POST /api/qa/ask`
+
+### Profiles
+- `POST /api/profiles/extract`
+
+### Followups
+- `POST /api/followups/generate`
+
+### Clients
+- `GET /api/clients`
+- `GET /api/clients/:id`
+
+---
+
+## 六、详细接口定义
+
+---
+
+## 1. POST `/api/documents/upload`
+
+### 作用
+上传知识库文档并触发处理流程。
+
+### 请求方式
+- `multipart/form-data`
+
+### 请求字段
+- `file`：文件本体，必填
+
+### 成功返回字段
+- `document.id`
+- `document.title`
+- `document.fileName`
+- `document.fileType`
+- `document.status`
+- `document.createdAt`
+
+### 文档状态建议值
+- `uploaded`
+- `processing`
+- `ready`
+- `failed`
+
+### 失败错误码建议
+- `INVALID_FILE`
+- `UNSUPPORTED_FILE_TYPE`
+- `UPLOAD_FAILED`
+- `PROCESSING_INIT_FAILED`
+
+### 当前说明
+Demo 阶段可以先用简化处理流程，但从契约上仍应保留文档状态字段。
+
+---
+
+## 2. GET `/api/documents`
+
+### 作用
+获取已上传文档列表。
+
+### 可选查询参数
+- `status`
+- `keyword`
+
+### 成功返回字段
+每个文档建议返回：
+- `id`
+- `title`
+- `fileName`
+- `status`
+- `createdAt`
+- `updatedAt`
+
+### 当前说明
+这个接口用于文档管理页或文档列表区域展示。
+
+---
+
+## 3. GET `/api/documents/:id`
+
+### 作用
+获取单个文档详情。
+
+### 路径参数
+- `id`：文档 ID
+
+### 成功返回字段
+- `id`
+- `title`
+- `fileName`
+- `fileType`
+- `status`
+- `createdAt`
+- `updatedAt`
+
+### 失败错误码建议
+- `DOCUMENT_NOT_FOUND`
+
+### 当前说明
+Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口定义。
+
+---
+
+## 4. POST `/api/qa/ask`
+
+### 作用
+基于知识库进行问答。
+
+### 请求字段
+- `question`：用户问题，必填
+
+### 成功返回字段
+- `answer`
+- `citations`
+- `confidence`
+
+### `citations` 建议结构
+每条 citation 至少包含：
+- `documentId`
+- `documentTitle`
+- `snippet`
+
+### `confidence` 建议值
+- `low`
+- `medium`
+- `high`
+
+### 失败错误码建议
+- `INVALID_INPUT`
+- `NO_RELEVANT_CONTEXT`
+- `LLM_GENERATION_FAILED`
+
+### 当前约束
+- 必须返回 `answer`
+- 应尽量返回至少一条 citation
+- citation 不能只是“文档名”，应有最小引用片段
+
+### 当前说明
+知识问答模块的核心价值不只是“能回答”，而是“能带出处回答”。
+
+---
+
+## 5. POST `/api/profiles/extract`
+
+### 作用
+从聊天记录中提取客户画像，并创建或更新客户记录。
+
+### 请求字段
+- `conversationText`：聊天记录全文，必填。表示**已标准化的咨询文本**，可来源于：
+  - 手动粘贴聊天记录
+  - 录音转写结果
+  - OCR 识别结果
+- `clientDisplayName`：客户显示名，可选
+
+### 成功返回字段
+
+#### `client`
+建议包含：
+- `id`
+- `displayName`
+- `currentStage`
+- `updatedAt`
+
+#### `conversationRecord`
+建议包含：
+- `id`
+- `createdAt`
+
+#### `profile`
+建议包含：
+- `id`
+- `studentStage`
+- `targetCountry`
+- `budgetRange`
+- `timeline`
+- `mainConcerns`
+- `riskFlags`
+- `currentStage`
+- `structuredJson`
+
+### 失败错误码建议
+- `INVALID_INPUT`
+- `PROFILE_EXTRACTION_FAILED`
+- `PROFILE_SCHEMA_INVALID`
+
+### 当前约束
+- 必须返回 `client`
+- 必须返回 `profile`
+- profile 输出必须是稳定结构，而不是自由散文
+
+### 当前说明
+这个接口是“聊天记录 → 客户画像 → 客户记录”链路的入口。
+
+---
+
+## 6. POST `/api/followups/generate`
+
+### 作用
+基于客户画像与聊天记录生成跟进消息。
+
+### 请求字段
+- `clientId`：客户 ID，必填
+- `profileId`：画像 ID，可选
+- `conversationRecordId`：聊天记录 ID，可选
+- `styleTypes`：要生成的风格列表，必填
+
+### `styleTypes` 建议值
+- `wechat_short`
+- `semi_formal`
+- `english_optional`
+
+### 成功返回字段
+- `clientId`
+- `followups`
+
+### `followups` 建议结构
+每条 follow-up 至少包含：
+- `id`
+- `styleType`
+- `content`
+
+### 失败错误码建议
+- `CLIENT_NOT_FOUND`
+- `PROFILE_NOT_FOUND`
+- `FOLLOWUP_GENERATION_FAILED`
+- `FOLLOWUP_SCHEMA_INVALID`
+
+### 当前约束
+- 至少支持两种风格输出中的一种
+- 推荐支持：
+  - 微信简短版
+  - 稍正式版
+
+### 当前说明
+该接口不负责自动发送，只负责生成可编辑草稿。
+
+---
+
+## 7. GET `/api/clients`
+
+### 作用
+获取客户记录列表。
+
+### 可选查询参数
+- `keyword`
+- `targetCountry`
+- `sortBy`
+
+### `sortBy` 建议值
+- `updatedAt`
+- `createdAt`
+
+### 成功返回字段
+每条客户记录建议包含：
+- `id`
+- `displayName`
+- `studentStage`
+- `targetCountry`
+- `currentStage`
+- `updatedAt`
+
+### 当前说明
+这是“客户记录模块”的核心列表接口。  
+当前只做轻量列表，不扩展成 CRM 筛选系统。
+
+---
+
+## 8. GET `/api/clients/:id`
+
+### 作用
+获取单个客户详情。
+
+### 路径参数
+- `id`：客户 ID
+
+### 成功返回字段
+
+#### `client`
+建议包含：
+- `id`
+- `displayName`
+- `studentStage`
+- `targetCountry`
+- `budgetRange`
+- `currentStage`
+- `createdAt`
+- `updatedAt`
+
+#### `latestConversationRecord`
+建议包含：
+- `id`
+- `rawText`
+- `createdAt`
+
+#### `latestProfile`
+建议包含：
+- `id`
+- `studentStage`
+- `targetCountry`
+- `budgetRange`
+- `timeline`
+- `mainConcerns`
+- `riskFlags`
+- `currentStage`
+- `structuredJson`
+
+#### `latestFollowups`
+建议包含数组，每项至少有：
+- `id`
+- `styleType`
+- `content`
+
+### 失败错误码建议
+- `CLIENT_NOT_FOUND`
+
+### 当前说明
+这个接口支撑客户详情页，帮助顾问回看客户信息、聊天内容和最近生成结果。
+
+---
+
+## 七、输入校验建议
+
+### 1. 所有 POST 接口必须做参数校验
+建议统一使用 Zod。
+
+### 2. 问答接口
+至少校验：
+- `question` 非空
+- 长度在合理范围内
+
+### 3. 画像提取接口
+至少校验：
+- `conversationText` 非空
+- 文本长度不超过系统可承受阈值
+
+### 4. 跟进消息接口
+至少校验：
+- `clientId` 必填
+- `styleTypes` 必填且至少一个
+
+---
+
+## 八、输出结构约束建议
+
+### 1. 问答接口
+后端必须保证：
+- answer 是字符串
+- citations 是数组
+- citation 字段完整
+
+### 2. 客户画像接口
+后端必须保证：
+- profile 为结构化对象
+- 高价值字段明确存在
+- 不允许前端直接接收模型原始文本
+
+### 3. 跟进消息接口
+后端必须保证：
+- followups 为数组
+- 每条结果都明确标注 styleType
+- content 为可直接展示和复制的文本
+
+---
+
+## 九、错误处理约束
+
+### 当前建议前端至少可识别以下错误类别
+
+#### 文档相关
+- 上传失败
+- 文件格式不支持
+- 文档处理失败
+
+#### 问答相关
+- 输入无效
+- 无可用上下文
+- 模型生成失败
+
+#### 画像相关
+- 聊天记录为空
+- 画像提取失败
+- 画像结构不合法
+
+#### 跟进消息相关
+- 客户不存在
+- 画像不存在
+- 生成失败
+
+#### 客户记录相关
+- 客户不存在
+
+---
+
+## 十、当前暂不定义的接口
+
+为了控制 Demo 范围，当前不定义以下接口：
+
+- 删除客户记录
+- 编辑完整客户档案
+- 客户阶段流转接口
+- 自动发送消息
+- Prompt 管理后台接口
+- 复杂历史时间轴接口
+- CRM 漏斗分析接口
+- 多租户组织管理接口
+
+这些能力如有需要，可进入后续版本。
+
+---
+
+## 十一、接口实现建议
+
+### 1. Route Handler 保持轻薄
+每个 route 文件只负责：
+
+- 接收请求
+- 参数校验
+- 调用 service
+- 返回结果
+
+不要把核心业务逻辑全部堆在 route 里。
+
+### 2. 业务逻辑放到 service 层
+例如：
+
+- 文档处理逻辑放到 `documentService`
+- 问答逻辑放到 `qaService`
+- 画像提取逻辑放到 `profileService`
+- 跟进生成逻辑放到 `followupService`
+- 客户记录读取逻辑放到 `clientService`
+
+### 3. 这样做的额外好处
+如果未来需要前后端拆分：
+
+- route 层可以替换
+- service 层大部分逻辑可复用
+- API 契约本身不需要重写
+
+---
+
+## 十二、当前开发优先级建议
+
+### P0 接口
+- `POST /api/documents/upload`
+- `POST /api/qa/ask`
+- `POST /api/profiles/extract`
+- `POST /api/followups/generate`
+
+### P1 接口
+- `GET /api/documents`
+- `GET /api/clients`
+- `GET /api/clients/:id`
+
+### P2 接口
+- `GET /api/documents/:id`
+
+说明：
+
+先把 AI 核心闭环打通，再补列表与详情类接口，会更符合当前 Demo 开发节奏。
+
+---
+
+## 十三、关联文档
+
+- [[PRD]]
+- [[MVP范围]]
+- [[系统架构]]
+- [[数据模型]]
+- [[客户记录模块]]
+- [[输出Schema定义]]
