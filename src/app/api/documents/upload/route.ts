@@ -13,6 +13,7 @@ function getErrorStatusCode(code: string) {
       return 400;
     case "UPLOAD_FAILED":
     case "PROCESSING_INIT_FAILED":
+    case "PROCESSING_FAILED":
       return 500;
     default:
       return 500;

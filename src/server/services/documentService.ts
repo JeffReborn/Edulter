@@ -3,12 +3,14 @@ import type { DbClient } from "@/lib/db";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { PDFParse } from "pdf-parse";
 
 export type DocumentUploadErrorCode =
   | "INVALID_FILE"
   | "UNSUPPORTED_FILE_TYPE"
   | "UPLOAD_FAILED"
-  | "PROCESSING_INIT_FAILED";
+  | "PROCESSING_INIT_FAILED"
+  | "PROCESSING_FAILED";
 
 export class DocumentUploadError extends Error {
   code: DocumentUploadErrorCode;
@@ -21,6 +23,88 @@ export class DocumentUploadError extends Error {
 }
 
 const ALLOWED_FILE_TYPES = new Set(["txt", "pdf"]);
+
+// Demo stage: use a simple, stable chunking strategy.
+const MAX_CHARS_PER_CHUNK = 1200;
+const MIN_MEANINGFUL_TEXT_CHARS = 200;
+
+function normalizeExtractedText(input: string): string {
+  // Preserve paragraph structure (blank lines), but normalize noisy whitespace.
+  return input
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function chunkText(text: string): string[] {
+  const paragraphs = text
+    .split(/\n{2,}/g)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+  let current = "";
+
+  const pushCurrent = () => {
+    const trimmed = current.trim();
+    if (trimmed) chunks.push(trimmed);
+    current = "";
+  };
+
+  for (const paragraph of paragraphs) {
+    const maybeSep = current ? "\n\n" : "";
+    if (current.length + maybeSep.length + paragraph.length <= MAX_CHARS_PER_CHUNK) {
+      current += maybeSep + paragraph;
+      continue;
+    }
+
+    // Flush current chunk first.
+    pushCurrent();
+
+    if (paragraph.length <= MAX_CHARS_PER_CHUNK) {
+      current = paragraph;
+      continue;
+    }
+
+    // Paragraph is too long: split it into fixed-length segments.
+    for (let i = 0; i < paragraph.length; i += MAX_CHARS_PER_CHUNK) {
+      const part = paragraph.slice(i, i + MAX_CHARS_PER_CHUNK).trim();
+      if (part) chunks.push(part);
+    }
+  }
+
+  pushCurrent();
+  return chunks;
+}
+
+async function extractTextFromFileBuffer(
+  fileType: string,
+  fileBuffer: Buffer
+): Promise<string> {
+  if (fileType === "txt") {
+    // Assume UTF-8 for demo stage.
+    return fileBuffer.toString("utf8");
+  }
+
+  if (fileType === "pdf") {
+    const parser = new PDFParse({ data: fileBuffer });
+    try {
+      const textResult = await parser.getText();
+      return textResult.text ?? "";
+    } finally {
+      await parser.destroy();
+    }
+  }
+
+  // Should be unreachable because caller validates file type.
+  return "";
+}
+
+function getStatusName(status: KnowledgeDocumentStatus): string {
+  return status;
+}
 
 function sanitizeStorageFileName(fileName: string): string {
   const base = path.basename(fileName);
@@ -66,6 +150,7 @@ export interface UploadedKnowledgeDocument {
 
 export function createDocumentService(deps: DocumentServiceDeps) {
   const { db } = deps;
+  const KB_STORAGE_PREFIX = "dev-knowledge-documents";
 
   return {
     /**
@@ -143,19 +228,27 @@ export function createDocumentService(deps: DocumentServiceDeps) {
       // Storage strategy (Demo fallback):
       // - 若你未来接入 S3/Supabase Storage，可替换这里的本地落盘逻辑
       // - 当前实现明确是 dev/stage 级别：写到本地项目目录下，供后续模块读取 storageKey
-      const baseDir =
+      // New storage strategy (Demo):
+      // - storageKey keeps `dev-knowledge-documents/...` prefix
+      // - but base directory should be the `storage/` root (avoid nested duplication)
+      const storageRootNew =
+        process.env.DEV_UPLOADS_DIR ?? path.join(process.cwd(), "storage");
+      // Legacy fallback for already stored files (created before this rule fix).
+      // Best-effort: if file doesn't exist in the new location, try legacy.
+      const storageRootLegacy =
         process.env.DEV_UPLOADS_DIR ??
         path.join(process.cwd(), "storage", "dev-knowledge-documents");
 
       const storageFileName = sanitizeStorageFileName(fileName);
       const storageId = crypto.randomUUID();
-      const storageKey = `dev-knowledge-documents/${storageId}/${storageFileName}`;
+      const storageKey = `${KB_STORAGE_PREFIX}/${storageId}/${storageFileName}`;
 
-      const storagePath = path.join(baseDir, storageKey);
+      const storagePathNew = path.join(storageRootNew, storageKey);
+      const storagePathLegacy = path.join(storageRootLegacy, storageKey);
 
       try {
-        await fs.mkdir(path.dirname(storagePath), { recursive: true });
-        await fs.writeFile(storagePath, fileBuffer);
+        await fs.mkdir(path.dirname(storagePathNew), { recursive: true });
+        await fs.writeFile(storagePathNew, fileBuffer);
       } catch {
         throw new DocumentUploadError(
           "UPLOAD_FAILED",
@@ -176,15 +269,120 @@ export function createDocumentService(deps: DocumentServiceDeps) {
           },
         });
 
-        return {
-          id: created.id,
-          title: created.title,
-          fileName: created.fileName,
-          fileType: created.fileType,
-          status: created.status,
-          createdAt: created.createdAt,
-        };
-      } catch {
+        // Task Card 05: ingestion after upload (txt/pdf text extraction + chunking).
+        try {
+          await db.knowledgeDocument.update({
+            where: { id: created.id },
+            data: { status: "processing" },
+          });
+
+          // Read back from storage (new location first; then legacy fallback).
+          let storedBuffer: Buffer;
+          try {
+            storedBuffer = await fs.readFile(storagePathNew);
+          } catch (err) {
+            const legacyErr = err as NodeJS.ErrnoException;
+            if (legacyErr?.code === "ENOENT") {
+              storedBuffer = await fs.readFile(storagePathLegacy);
+              // Keep future reads consistent if we found a legacy file.
+              await fs.mkdir(path.dirname(storagePathNew), { recursive: true });
+              await fs.copyFile(storagePathLegacy, storagePathNew);
+            } else {
+              throw err;
+            }
+          }
+          const extractedText = await extractTextFromFileBuffer(
+            created.fileType,
+            storedBuffer
+          );
+          const normalizedText = normalizeExtractedText(extractedText);
+
+          if (
+            !normalizedText ||
+            normalizedText.replace(/\s+/g, "").length < MIN_MEANINGFUL_TEXT_CHARS
+          ) {
+            await db.knowledgeDocument.update({
+              where: { id: created.id },
+              data: { status: "failed", rawText: null },
+            });
+            console.error(
+              `[documentService] Ingestion failed: empty/unusable text. docId=${created.id}`
+            );
+            throw new DocumentUploadError(
+              "PROCESSING_FAILED",
+              "Document processing failed. Please try again."
+            );
+          }
+
+          const chunks = chunkText(normalizedText);
+          if (chunks.length === 0) {
+            await db.knowledgeDocument.update({
+              where: { id: created.id },
+              data: { status: "failed", rawText: null },
+            });
+            console.error(
+              `[documentService] Ingestion failed: produced zero chunks. docId=${created.id}`
+            );
+            throw new DocumentUploadError(
+              "PROCESSING_FAILED",
+              "Document processing failed. Please try again."
+            );
+          }
+
+          await db.$transaction(async (tx) => {
+            // Idempotency: if ingestion is retried, ensure no duplicate chunks.
+            await tx.documentChunk.deleteMany({
+              where: { documentId: created.id },
+            });
+
+            await tx.documentChunk.createMany({
+              data: chunks.map((content, chunkIndex) => ({
+                documentId: created.id,
+                chunkIndex,
+                content,
+              })),
+            });
+
+            await tx.knowledgeDocument.update({
+              where: { id: created.id },
+              data: { status: "ready", rawText: normalizedText },
+            });
+          });
+
+          return {
+            id: created.id,
+            title: created.title,
+            fileName: created.fileName,
+            fileType: created.fileType,
+            status: "ready",
+            createdAt: created.createdAt,
+          };
+        } catch (err) {
+          // Ensure lifecycle ends in a deterministic state.
+          try {
+            await db.knowledgeDocument.update({
+              where: { id: created.id },
+              data: { status: "failed", rawText: null },
+            });
+          } catch {
+            // Ignore secondary failures; original error will be logged.
+          }
+
+          console.error(
+            `[documentService] Ingestion failed. docId=${created.id}, status=${getStatusName(
+              created.status
+            )}`,
+            err
+          );
+          throw new DocumentUploadError(
+            "PROCESSING_FAILED",
+            "Document processing failed. Please try again."
+          );
+        }
+      } catch (err) {
+        if (err instanceof DocumentUploadError) {
+          throw err;
+        }
         throw new DocumentUploadError(
           "PROCESSING_INIT_FAILED",
           "Failed to create document record."
