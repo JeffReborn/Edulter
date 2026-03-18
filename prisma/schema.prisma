@@ -1,0 +1,217 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  admin
+  consultant
+}
+
+enum KnowledgeDocumentStatus {
+  uploaded
+  processing
+  ready
+  failed
+}
+
+enum ClientStage {
+  new_lead
+  initial_consultation
+  in_followup
+  high_intent
+  uncertain
+  closed
+}
+
+enum ConversationSourceType {
+  manual_paste
+  imported
+}
+
+enum FollowupStyleType {
+  wechat_short
+  semi_formal
+  english_optional
+}
+
+model User {
+  id    String   @id @default(cuid())
+  email String   @unique
+  name  String?
+  role  UserRole @default(consultant)
+
+  uploadedKnowledgeDocuments KnowledgeDocument[] @relation("KnowledgeDocumentUploadedBy")
+  conversationRecords        ConversationRecord[] @relation("ConversationRecordCreatedBy")
+  generatedFollowups         GeneratedFollowup[]  @relation("GeneratedFollowupCreatedBy")
+  qaLogs                     QaLog[]             @relation("QaLogCreatedBy")
+  ownedClients               Client[]            @relation("ClientOwner")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model KnowledgeDocument {
+  id         String                   @id @default(cuid())
+  title      String
+  fileName   String
+  fileType   String
+  storageKey String
+  status     KnowledgeDocumentStatus  @default(uploaded)
+  rawText    String?
+
+  uploadedById String?
+  uploadedBy   User?                  @relation("KnowledgeDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  chunks DocumentChunk[]
+  qaLogs QaLog[] @relation("QaLogSourceDocuments")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([uploadedById])
+  @@index([status])
+}
+
+model DocumentChunk {
+  id          String   @id @default(cuid())
+  documentId  String
+  chunkIndex  Int
+  content     String
+  embedding   Json?
+  tokenCount  Int?
+  metadata    Json?
+
+  document KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId])
+}
+
+model Client {
+  id            String       @id @default(cuid())
+  displayName   String
+  studentName   String?
+  studentStage  String?
+  targetCountry String?
+  budgetRange   String?
+  currentStage  ClientStage  @default(uncertain)
+  sourceNote    String?
+
+  ownerUserId String?
+  ownerUser   User? @relation("ClientOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  conversationRecords ConversationRecord[]
+  profiles            ClientProfile[]
+  generatedFollowups  GeneratedFollowup[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerUserId])
+  @@index([currentStage])
+  @@index([updatedAt])
+}
+
+model ConversationRecord {
+  id         String                @id @default(cuid())
+  clientId   String
+  rawText    String
+  sourceType ConversationSourceType @default(manual_paste)
+
+  createdById String?
+  createdBy   User?                 @relation("ConversationRecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  client   Client           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  profiles ClientProfile[]
+  followups GeneratedFollowup[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([createdById])
+  @@index([createdAt])
+}
+
+model ClientProfile {
+  id                   String   @id @default(cuid())
+  clientId             String
+  conversationRecordId  String
+  studentStage         String?
+  targetCountry        String?
+  targetProgram        String?
+  budgetRange          String?
+  timeline             String?
+  englishLevel         String?
+  parentGoals          Json?
+  mainConcerns         Json?
+  riskFlags            Json?
+  currentStage         ClientStage @default(uncertain)
+  structuredJson       Json
+  modelName            String?
+  promptVersion        String?
+
+  client            Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  conversationRecord ConversationRecord @relation(fields: [conversationRecordId], references: [id], onDelete: Cascade)
+  generatedFollowups  GeneratedFollowup[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([conversationRecordId])
+  @@index([createdAt])
+}
+
+model GeneratedFollowup {
+  id                  String           @id @default(cuid())
+  clientId            String
+  profileId           String?
+  conversationRecordId String?
+  styleType           FollowupStyleType
+  content             String
+  modelName           String?
+  promptVersion       String?
+
+  createdById String?
+  createdBy   User? @relation("GeneratedFollowupCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  client            Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  profile           ClientProfile?     @relation(fields: [profileId], references: [id], onDelete: SetNull)
+  conversationRecord ConversationRecord? @relation(fields: [conversationRecordId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([profileId])
+  @@index([conversationRecordId])
+  @@index([createdById])
+  @@index([createdAt])
+}
+
+model QaLog {
+  id            String   @id @default(cuid())
+  question      String
+  answer        String
+  citationsJson Json
+  modelName     String?
+
+  createdById String?
+  createdBy   User? @relation("QaLogCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  sourceDocuments KnowledgeDocument[] @relation("QaLogSourceDocuments")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdById])
+  @@index([createdAt])
+}
