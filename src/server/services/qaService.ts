@@ -12,23 +12,35 @@ export interface AskQuestionInput {
   // 后续可补充 clientId / contextIds 等字段
 }
 
+export type QaConfidence = "low" | "medium" | "high";
+
+export interface QaCitation {
+  documentId: string;
+  documentTitle: string;
+  snippet: string;
+}
+
 export interface QaAnswer {
   answer: string;
-  citations: Array<{
-    documentId: string;
-    chunkId?: string;
-  }>;
+  citations: QaCitation[];
+  confidence: QaConfidence;
 }
 
 export function createQaService(_deps: QaServiceDeps) {
+  void _deps; // Task 07 placeholder: dependencies will be used when implementing retrieval/LLM (task 08).
   return {
     /**
-     * 占位实现：后续任务卡会在这里串联检索、AI 调用与日志写入。
+     * 任务卡 07 占位实现：
+     *  - 只返回稳定输出结构
+     *  - 不做检索、Prompt 构造、LLM 生成（待任务卡 08 实现）
      */
     async ask(_input: AskQuestionInput): Promise<QaAnswer> {
-      throw new Error(
-        "qaService.ask is not implemented yet. Implement it in the QA module task cards."
-      );
+      void _input; // Task 07 placeholder: API route layer validates input.
+      return {
+        answer: "当前问答链路处于骨架阶段，尚未接入检索与回答生成能力。请在任务卡 08 后重试。",
+        citations: [],
+        confidence: "low",
+      };
     },
 
     /**
@@ -37,6 +49,7 @@ export function createQaService(_deps: QaServiceDeps) {
     async getRecentQaLogs(_limit: number): Promise<
       Array<Pick<QaLogSelect, "id" | "question" | "answer" | "modelName"> & { createdAt: Date }>
     > {
+      void _limit; // Reserved for future QA log listing.
       throw new Error(
         "qaService.getRecentQaLogs is not implemented yet. Implement it in the QA module task cards."
       );
