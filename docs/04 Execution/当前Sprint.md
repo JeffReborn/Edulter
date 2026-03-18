@@ -182,15 +182,15 @@
 - [x] 实现 `POST /api/documents/upload`
 - [x] 接入对象存储
 - [x] 完成文件类型校验
-- [ ] 完成至少一种格式的文本提取
-- [ ] 完成 chunking
+- [x] 完成至少一种格式的文本提取
+- [x] 完成 chunking
 - [ ] 完成 embedding 生成或接口预留
 - [x] 写入 `knowledge_documents`
-- [ ] 写入 `document_chunks`
+- [x] 写入 `document_chunks`
 - [x] 完成文档状态流转
-- [ ] 完成上传表单 UI
-- [ ] 完成文档状态展示 UI
-- [ ] 增加上传失败提示
+- [x] 完成上传表单 UI
+- [x] 完成文档状态展示 UI
+- [x] 增加上传失败提示
 
 ### 验收标准
 - 上传一份有效文档后，数据库中能看到文档记录
