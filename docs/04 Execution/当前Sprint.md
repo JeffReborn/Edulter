@@ -143,16 +143,16 @@
 把核心数据实体真正落到数据库层。
 
 ### 任务
-- [ ] 安装并配置 Prisma
-- [ ] 配置 PostgreSQL 连接
-- [ ] 建立 `knowledge_documents` 模型
-- [ ] 建立 `document_chunks` 模型
-- [ ] 建立 `clients` 模型
-- [ ] 建立 `conversation_records` 模型
-- [ ] 建立 `client_profiles` 模型
-- [ ] 建立 `generated_followups` 模型
-- [ ] 视情况建立 `qa_logs` 模型
-- [ ] 生成并执行 migration
+- [x] 安装并配置 Prisma
+- [x] 配置 PostgreSQL 连接
+- [x] 建立 `knowledge_documents` 模型
+- [x] 建立 `document_chunks` 模型
+- [x] 建立 `clients` 模型
+- [x] 建立 `conversation_records` 模型
+- [x] 建立 `client_profiles` 模型
+- [x] 建立 `generated_followups` 模型
+- [x] 视情况建立 `qa_logs` 模型
+- [x] 生成并执行 migration
 - [ ] 完成基础 seed 或测试数据准备（可选）
 
 ### 验收标准
