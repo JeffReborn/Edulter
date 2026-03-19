@@ -5,6 +5,7 @@ import { aiClient } from "@/lib/ai";
 import {
   createFollowupService,
   type FollowupStyleType,
+  FollowupGenerationError,
   validateGeneratedFollowupResult,
 } from "@/server/services/followupService";
 
@@ -99,10 +100,38 @@ export async function POST(req: Request) {
         styleTypes,
       });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      if (msg === "CLIENT_NOT_FOUND") {
-        return jsonError("CLIENT_NOT_FOUND", "Client not found.", 404);
+      if (e instanceof FollowupGenerationError) {
+        if (e.code === "CLIENT_NOT_FOUND") {
+          return jsonError("CLIENT_NOT_FOUND", "Client not found.", 404);
+        }
+        if (e.code === "PROFILE_NOT_FOUND") {
+          return jsonError(
+            "PROFILE_NOT_FOUND",
+            "No usable client profile found. Please extract profile first.",
+            404
+          );
+        }
+        if (e.code === "CONVERSATION_NOT_FOUND" || e.code === "INSUFFICIENT_CONTEXT") {
+          return jsonError(
+            "INSUFFICIENT_CONTEXT",
+            "No usable conversation context found. Please add consultation text first.",
+            400
+          );
+        }
+        if (e.code === "INVALID_INPUT") {
+          return jsonError("INVALID_INPUT", e.message, 400);
+        }
+        if (e.code === "FOLLOWUP_SCHEMA_INVALID") {
+          return jsonError("FOLLOWUP_SCHEMA_INVALID", e.message, 500);
+        }
+        return jsonError(
+          "FOLLOWUP_GENERATION_FAILED",
+          e.message || "Followup generation failed.",
+          500
+        );
       }
+
+      const msg = e instanceof Error ? e.message : "Unknown error";
       return jsonError("FOLLOWUP_GENERATION_FAILED", msg, 500);
     }
 
