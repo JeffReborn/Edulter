@@ -45,7 +45,8 @@ export default function Home() {
         key: "profiles",
         label: "客户画像提取",
         description: "基于咨询文本提取结构化客户画像",
-        status: "unavailable",
+        href: "/profiles",
+        status: "available",
       },
       {
         key: "followups",
