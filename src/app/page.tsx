@@ -20,7 +20,7 @@ type WorkbenchEntry = {
   status: "available" | "unavailable";
 };
 
-const STAGE_NOTE = "Demo 阶段：当前已完成文档上传闭环，后续模块将逐步接入。";
+const STAGE_NOTE = "Demo 阶段：文档上传、知识问答、客户画像提取、跟进消息生成已可体验。";
 
 export default function Home() {
   const router = useRouter();
@@ -52,7 +52,8 @@ export default function Home() {
         key: "followups",
         label: "跟进消息生成",
         description: "基于客户上下文生成跟进消息草稿",
-        status: "unavailable",
+        href: "/followups",
+        status: "available",
       },
       {
         key: "clients",
