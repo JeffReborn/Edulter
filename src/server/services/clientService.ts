@@ -24,10 +24,52 @@ export interface ClientListItem {
 }
 
 export interface ClientSummary {
-  client: ClientListItem;
-  latestProfile: unknown | null;
-  latestConversation: unknown | null;
-  latestFollowup: unknown | null;
+  client: {
+    id: string;
+    displayName: string;
+    studentStage: string | null;
+    targetCountry: string | null;
+    budgetRange: string | null;
+    currentStage: ClientStage;
+    createdAt: string;
+    updatedAt: string;
+  };
+  latestConversationRecord: {
+    id: string;
+    rawText: string;
+    createdAt: string;
+  } | null;
+  latestProfile: {
+    id: string;
+    studentStage: string | null;
+    targetCountry: string | null;
+    targetProgram: string | null;
+    budgetRange: string | null;
+    timeline: string | null;
+    englishLevel: string | null;
+    parentGoals: string[];
+    mainConcerns: string[];
+    riskFlags: string[];
+    currentStage: ClientStage;
+    structuredJson: Record<string, unknown>;
+    createdAt: string;
+  } | null;
+  latestFollowups: Array<{
+    id: string;
+    styleType: "wechat_short" | "semi_formal" | "english_optional";
+    content: string;
+    createdAt: string;
+  }>;
+}
+
+function toStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === "string");
+}
+
+function toRecord(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  return v as Record<string, unknown>;
 }
 
 export function createClientService(_deps: ClientServiceDeps) {
@@ -65,11 +107,110 @@ export function createClientService(_deps: ClientServiceDeps) {
       }));
     },
 
-    async getClientSummary(_clientId: string): Promise<ClientSummary> {
-      void _clientId;
-      throw new Error(
-        "clientService.getClientSummary is not implemented yet. Implement it in the client module task cards."
-      );
+    async getClientSummary(clientId: string): Promise<ClientSummary> {
+      const client = await db.client.findUnique({
+        where: { id: clientId },
+        select: {
+          id: true,
+          displayName: true,
+          studentStage: true,
+          targetCountry: true,
+          budgetRange: true,
+          currentStage: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      if (!client) {
+        throw new Error("CLIENT_NOT_FOUND");
+      }
+
+      const [latestConversationRecord, latestProfile, latestFollowups] =
+        await Promise.all([
+          db.conversationRecord.findFirst({
+            where: { clientId },
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              rawText: true,
+              createdAt: true,
+            },
+          }),
+          db.clientProfile.findFirst({
+            where: { clientId },
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              studentStage: true,
+              targetCountry: true,
+              targetProgram: true,
+              budgetRange: true,
+              timeline: true,
+              englishLevel: true,
+              parentGoals: true,
+              mainConcerns: true,
+              riskFlags: true,
+              currentStage: true,
+              structuredJson: true,
+              createdAt: true,
+            },
+          }),
+          db.generatedFollowup.findMany({
+            where: { clientId },
+            orderBy: { createdAt: "desc" },
+            take: 5,
+            select: {
+              id: true,
+              styleType: true,
+              content: true,
+              createdAt: true,
+            },
+          }),
+        ]);
+
+      return {
+        client: {
+          id: client.id,
+          displayName: client.displayName,
+          studentStage: client.studentStage,
+          targetCountry: client.targetCountry,
+          budgetRange: client.budgetRange,
+          currentStage: client.currentStage as ClientStage,
+          createdAt: client.createdAt.toISOString(),
+          updatedAt: client.updatedAt.toISOString(),
+        },
+        latestConversationRecord: latestConversationRecord
+          ? {
+              id: latestConversationRecord.id,
+              rawText: latestConversationRecord.rawText,
+              createdAt: latestConversationRecord.createdAt.toISOString(),
+            }
+          : null,
+        latestProfile: latestProfile
+          ? {
+              id: latestProfile.id,
+              studentStage: latestProfile.studentStage,
+              targetCountry: latestProfile.targetCountry,
+              targetProgram: latestProfile.targetProgram,
+              budgetRange: latestProfile.budgetRange,
+              timeline: latestProfile.timeline,
+              englishLevel: latestProfile.englishLevel,
+              parentGoals: toStringArray(latestProfile.parentGoals),
+              mainConcerns: toStringArray(latestProfile.mainConcerns),
+              riskFlags: toStringArray(latestProfile.riskFlags),
+              currentStage: latestProfile.currentStage as ClientStage,
+              structuredJson: toRecord(latestProfile.structuredJson),
+              createdAt: latestProfile.createdAt.toISOString(),
+            }
+          : null,
+        latestFollowups: latestFollowups.map((item) => ({
+          id: item.id,
+          styleType: item.styleType,
+          content: item.content,
+          createdAt: item.createdAt.toISOString(),
+        })),
+      };
     },
   };
 }
