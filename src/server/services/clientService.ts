@@ -1,32 +1,72 @@
-import type { ClientSelect } from "@/generated/prisma/models/Client";
-import type { ClientProfileSelect } from "@/generated/prisma/models/ClientProfile";
-import type { ConversationRecordSelect } from "@/generated/prisma/models/ConversationRecord";
-import type { GeneratedFollowupSelect } from "@/generated/prisma/models/GeneratedFollowup";
 import type { DbClient } from "@/lib/db";
 
 export interface ClientServiceDeps {
   db: DbClient;
 }
 
+export type ClientStage =
+  | "new_lead"
+  | "initial_consultation"
+  | "in_followup"
+  | "high_intent"
+  | "uncertain"
+  | "closed";
+
+export interface ClientListItem {
+  id: string;
+  displayName: string;
+  studentStage: string | null;
+  targetCountry: string | null;
+  currentStage: ClientStage;
+  updatedAt: string;
+  hasProfile: boolean;
+  hasFollowup: boolean;
+}
+
 export interface ClientSummary {
-  client: ClientSelect;
-  latestProfile: ClientProfileSelect | null;
-  latestConversation: ConversationRecordSelect | null;
-  latestFollowup: GeneratedFollowupSelect | null;
+  client: ClientListItem;
+  latestProfile: unknown | null;
+  latestConversation: unknown | null;
+  latestFollowup: unknown | null;
 }
 
 export function createClientService(_deps: ClientServiceDeps) {
+  const { db } = _deps;
+
   return {
-    /**
-     * 占位实现：后续任务卡会在这里实现客户列表与详情聚合逻辑。
-     */
-    async listClients(): Promise<ClientSelect[]> {
-      throw new Error(
-        "clientService.listClients is not implemented yet. Implement it in the client module task cards."
-      );
+    async listClients(): Promise<ClientListItem[]> {
+      const rows = await db.client.findMany({
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          displayName: true,
+          studentStage: true,
+          targetCountry: true,
+          currentStage: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              profiles: true,
+              generatedFollowups: true,
+            },
+          },
+        },
+      });
+
+      return rows.map((row) => ({
+        id: row.id,
+        displayName: row.displayName,
+        studentStage: row.studentStage,
+        targetCountry: row.targetCountry,
+        currentStage: row.currentStage as ClientStage,
+        updatedAt: row.updatedAt.toISOString(),
+        hasProfile: row._count.profiles > 0,
+        hasFollowup: row._count.generatedFollowups > 0,
+      }));
     },
 
     async getClientSummary(_clientId: string): Promise<ClientSummary> {
+      void _clientId;
       throw new Error(
         "clientService.getClientSummary is not implemented yet. Implement it in the client module task cards."
       );
