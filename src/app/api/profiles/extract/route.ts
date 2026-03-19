@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { aiClient } from "@/lib/ai";
 import {
   createProfileService,
+  ProfileExtractionError,
   validateExtractedProfileResult,
 } from "@/server/services/profileService";
 
@@ -96,6 +97,15 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true, data: validated }, { status: 200 });
   } catch (err) {
+    if (err instanceof ProfileExtractionError) {
+      const status =
+        err.code === "INVALID_INPUT"
+          ? 400
+          : err.code === "PROFILE_SCHEMA_INVALID"
+            ? 500
+            : 500;
+      return jsonError(err.code, err.message, status);
+    }
     const message = err instanceof Error ? err.message : "Unknown error";
     return jsonError("PROFILE_EXTRACTION_FAILED", message, 500);
   }
