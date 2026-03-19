@@ -20,7 +20,8 @@ type WorkbenchEntry = {
   status: "available" | "unavailable";
 };
 
-const STAGE_NOTE = "Demo 阶段：当前已完成文档上传闭环，后续模块将逐步接入。";
+const STAGE_NOTE =
+  "Demo 阶段：文档上传、知识问答、客户画像提取、跟进消息生成与客户记录列表均已可体验。";
 
 export default function Home() {
   const router = useRouter();
@@ -45,19 +46,22 @@ export default function Home() {
         key: "profiles",
         label: "客户画像提取",
         description: "基于咨询文本提取结构化客户画像",
-        status: "unavailable",
+        href: "/profiles",
+        status: "available",
       },
       {
         key: "followups",
         label: "跟进消息生成",
         description: "基于客户上下文生成跟进消息草稿",
-        status: "unavailable",
+        href: "/followups",
+        status: "available",
       },
       {
         key: "clients",
         label: "客户记录",
         description: "查看客户记录、画像与跟进结果",
-        status: "unavailable",
+        href: "/clients",
+        status: "available",
       },
     ],
     []
@@ -80,7 +84,7 @@ export default function Home() {
 
             <SectionHeader
               title="模块入口"
-              description="点击进入文档上传；其余模块在后续任务卡中逐步实现。"
+              description="点击卡片进入对应功能页，当前五个一级模块入口均已开放。"
             />
 
             <div className="grid gap-4 sm:grid-cols-2">
