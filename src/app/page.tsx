@@ -38,7 +38,8 @@ export default function Home() {
         key: "qa",
         label: "知识问答",
         description: "基于已上传资料进行问答并查看出处",
-        status: "unavailable",
+        href: "/qa",
+        status: "available",
       },
       {
         key: "profiles",
