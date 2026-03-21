@@ -3,7 +3,7 @@
 状态：Draft  
 版本：v0.1  
 所属阶段：Demo  
-最后更新：2026-03-16
+最后更新：2026-03-19
 
 ---
 
@@ -97,8 +97,9 @@
 
 ### Documents
 - `POST /api/documents/upload`
-- `GET /api/documents`
-- `GET /api/documents/:id`
+- `GET /api/documents`（文档管理列表，支持分页与筛选）
+- `DELETE /api/documents/:id`（软删除，Demo 治理）
+- `GET /api/documents/:id`（契约保留，可选实现）
 
 ### QA
 - `POST /api/qa/ask`
@@ -137,6 +138,7 @@
 - `document.fileType`
 - `document.status`
 - `document.createdAt`
+- `document.processingError`：当 `status` 为 `failed` 时可能返回可读失败原因；否则可为 `null`
 
 ### 文档状态建议值
 - `uploaded`
@@ -158,27 +160,71 @@ Demo 阶段可以先用简化处理流程，但从契约上仍应保留文档状
 ## 2. GET `/api/documents`
 
 ### 作用
-获取已上传文档列表。
+获取已上传文档列表，供 **文档管理页**（`/documents/manage`）等使用。  
+**不包含**已软删除文档（`deletedAt` 非空的不返回）。
 
-### 可选查询参数
-- `status`
-- `keyword`
+### 查询参数
 
-### 成功返回字段
-每个文档建议返回：
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `page` | 否 | 页码，从 **1** 开始；默认 `1`。须为正整数。 |
+| `pageSize` | 否 | 每页条数；默认 **15**，最大 **50**。须为正整数。 |
+| `q` | 否 | 按 **标题** 或 **文件名** 模糊匹配（不区分大小写）。 |
+| `status` | 否 | 按状态筛选：`uploaded` \| `processing` \| `ready` \| `failed`；传 `all` 或不传表示不限。 |
+
+### 成功响应结构
+
+- `data.documents`：当前页的文档数组。
+- `data.pagination`：分页元数据。
+  - `total`：符合当前筛选条件的总条数（不含软删）。
+  - `page`：当前实际页码（若请求的 `page` 超过总页数，服务端会 **钳制到最后一页**，并以本字段为准）。
+  - `pageSize`：本页大小。
+  - `totalPages`：总页数（至少为 `1`）。
+
+### `documents[]` 每项字段
+
 - `id`
 - `title`
 - `fileName`
-- `status`
-- `createdAt`
-- `updatedAt`
+- `fileType`（扩展名，如 `pdf`、`txt`）
+- `status`：`uploaded` \| `processing` \| `ready` \| `failed`
+- `processingError`：`string \| null`，失败时的可读原因
+- `createdAt`、`updatedAt`：ISO 8601 字符串
+
+### 失败错误码
+
+- `INVALID_QUERY`：非法的 `page` / `pageSize` / `status`
+- `DOCUMENT_LIST_FAILED`：服务端异常
 
 ### 当前说明
-这个接口用于文档管理页或文档列表区域展示。
+
+- 列表为 **服务端分页**，避免一次加载过多数据。
+- 与 `POST /api/documents/upload` 使用同一套文档状态语义；上传处理失败时 `processingError` 可被本接口读出并展示。
 
 ---
 
-## 3. GET `/api/documents/:id`
+## 3. DELETE `/api/documents/:id`
+
+### 作用
+对文档执行 **软删除**（设置 `deletedAt`）：后续列表与知识检索均不再包含该文档。  
+Demo 阶段不删除磁盘文件与 `document_chunks` 记录（可留待后续异步清理任务）。
+
+### 路径参数
+- `id`：文档 ID
+
+### 成功响应
+- `success`: `true`
+- `data.id`：已软删除的文档 ID
+
+### 失败错误码
+
+- `INVALID_ID`：缺少或非法的 `id`
+- `NOT_FOUND`：文档不存在或已删除
+- `DOCUMENT_DELETE_FAILED`：服务端异常
+
+---
+
+## 4. GET `/api/documents/:id`
 
 ### 作用
 获取单个文档详情。
@@ -203,7 +249,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
-## 4. POST `/api/qa/ask`
+## 5. POST `/api/qa/ask`
 
 ### 作用
 基于知识库进行问答。
@@ -242,7 +288,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
-## 5. POST `/api/profiles/extract`
+## 6. POST `/api/profiles/extract`
 
 ### 作用
 从聊天记录中提取客户画像，并创建或更新客户记录。
@@ -295,7 +341,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
-## 6. POST `/api/followups/generate`
+## 7. POST `/api/followups/generate`
 
 ### 作用
 基于客户画像与聊天记录生成跟进消息。
@@ -338,7 +384,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
-## 7. GET `/api/clients`
+## 8. GET `/api/clients`
 
 ### 作用
 获取客户记录列表。
@@ -367,7 +413,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
-## 8. GET `/api/clients/:id`
+## 9. GET `/api/clients/:id`
 
 ### 作用
 获取单个客户详情。
@@ -472,6 +518,8 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - 上传失败
 - 文件格式不支持
 - 文档处理失败
+- 文档列表加载失败（含非法分页/筛选参数）
+- 文档删除失败（含记录不存在或已删除）
 
 #### 问答相关
 - 输入无效
@@ -549,7 +597,8 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - `POST /api/followups/generate`
 
 ### P1 接口
-- `GET /api/documents`
+- `GET /api/documents`（含分页、搜索、状态筛选）
+- `DELETE /api/documents/:id`（软删除）
 - `GET /api/clients`
 - `GET /api/clients/:id`
 
@@ -558,7 +607,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 说明：
 
-先把 AI 核心闭环打通，再补列表与详情类接口，会更符合当前 Demo 开发节奏。
+先把 AI 核心闭环打通，再补列表、治理与详情类接口，会更符合当前 Demo 开发节奏。
 
 ---
 

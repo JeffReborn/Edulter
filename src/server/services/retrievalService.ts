@@ -59,8 +59,13 @@ export function createRetrievalService(deps: RetrievalServiceDeps) {
         return [];
       }
 
-      const whereDoc: { status: "ready"; id?: { in: string[] } } = {
+      const whereDoc: {
+        status: "ready";
+        deletedAt: null;
+        id?: { in: string[] };
+      } = {
         status: "ready",
+        deletedAt: null,
       };
       if (query.documentIds?.length) {
         whereDoc.id = { in: query.documentIds };

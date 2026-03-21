@@ -21,7 +21,7 @@ type WorkbenchEntry = {
 };
 
 const STAGE_NOTE =
-  "Demo 阶段：文档上传、知识问答、客户画像提取、跟进消息生成与客户记录列表均已可体验。";
+  "Demo 阶段：文档上传与文档管理、知识问答、客户画像提取、跟进消息生成与客户记录列表均已可体验。";
 
 export default function Home() {
   const router = useRouter();
@@ -31,7 +31,7 @@ export default function Home() {
       {
         key: "documents",
         label: "文档上传",
-        description: "上传内部资料并完成知识库入库处理",
+        description: "上传内部资料并完成入库；可在同模块「文档管理」查看状态与失败原因",
         href: "/documents",
         status: "available",
       },

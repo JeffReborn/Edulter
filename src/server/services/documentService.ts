@@ -5,6 +5,16 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { PDFParse } from "pdf-parse";
 
+function ensurePdfWorkerConfigured() {
+  // Next.js dev 环境下，pdf.js 默认 worker 配置可能会被打包后路径错位，
+  // 导致找不到 `.next/.../pdf.worker.mjs`。这里显式指定真实 worker 入口。
+  const workerPath = path.join(
+    process.cwd(),
+    "node_modules/pdfjs-dist/build/pdf.worker.mjs"
+  );
+  PDFParse.setWorker(workerPath);
+}
+
 export type DocumentUploadErrorCode =
   | "INVALID_FILE"
   | "UNSUPPORTED_FILE_TYPE"
@@ -26,7 +36,8 @@ const ALLOWED_FILE_TYPES = new Set(["txt", "pdf"]);
 
 // Demo stage: use a simple, stable chunking strategy.
 const MAX_CHARS_PER_CHUNK = 1200;
-const MIN_MEANINGFUL_TEXT_CHARS = 200;
+// Demo 阶段：允许较短文档也进入后续 chunk 流程，避免误判为“空内容”。
+const MIN_MEANINGFUL_TEXT_CHARS = 50;
 
 function normalizeExtractedText(input: string): string {
   // Preserve paragraph structure (blank lines), but normalize noisy whitespace.
@@ -89,6 +100,7 @@ async function extractTextFromFileBuffer(
   }
 
   if (fileType === "pdf") {
+    ensurePdfWorkerConfigured();
     const parser = new PDFParse({ data: fileBuffer });
     try {
       const textResult = await parser.getText();
@@ -104,6 +116,17 @@ async function extractTextFromFileBuffer(
 
 function getStatusName(status: KnowledgeDocumentStatus): string {
   return status;
+}
+
+const PROCESSING_ERROR_EMPTY_TEXT =
+  "提取的文本过少或为空，无法入库（常见于扫描版 PDF、图片型 PDF 或部分 AI 生成 PDF）。";
+const PROCESSING_ERROR_ZERO_CHUNKS =
+  "文本无法切分为有效知识块，入库失败（请检查文档是否为可读文本）。";
+
+function truncateProcessingError(message: string, maxLen = 500): string {
+  const t = message.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen)}…`;
 }
 
 function sanitizeStorageFileName(fileName: string): string {
@@ -131,6 +154,36 @@ export interface KnowledgeDocumentSummary {
   createdAt: Date;
 }
 
+export interface ListKnowledgeDocumentsParams {
+  /** 标题或文件名模糊匹配（不区分大小写） */
+  search?: string;
+  status?: KnowledgeDocumentStatus;
+  /** 从 1 开始 */
+  page?: number;
+  /** 每页条数，默认 15，最大 50 */
+  pageSize?: number;
+}
+
+export interface ListKnowledgeDocumentsResult {
+  items: KnowledgeDocumentListItem[];
+  total: number;
+  /** 实际返回的页码（若请求页超出范围会钳制到最后一页） */
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface KnowledgeDocumentListItem {
+  id: string;
+  title: string;
+  fileName: string;
+  fileType: string;
+  status: KnowledgeDocumentStatus;
+  processingError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface UploadKnowledgeDocumentInput {
   title: string;
   fileName: string;
@@ -146,6 +199,8 @@ export interface UploadedKnowledgeDocument {
   fileType: string;
   status: KnowledgeDocumentStatus;
   createdAt: Date;
+  /** 当 status 为 failed 时可能提供 */
+  processingError?: string | null;
 }
 
 export function createDocumentService(deps: DocumentServiceDeps) {
@@ -162,8 +217,8 @@ export function createDocumentService(deps: DocumentServiceDeps) {
     async getDocumentById(
       id: string
     ): Promise<KnowledgeDocumentSummary | null> {
-      return db.knowledgeDocument.findUnique({
-        where: { id },
+      const row = await db.knowledgeDocument.findFirst({
+        where: { id, deletedAt: null },
         select: {
           id: true,
           title: true,
@@ -175,13 +230,20 @@ export function createDocumentService(deps: DocumentServiceDeps) {
           updatedAt: true,
         },
       });
+      if (!row) return null;
+      return {
+        id: row.id,
+        title: row.title,
+        status: row.status,
+        createdAt: row.createdAt,
+      };
     },
 
     async listRecentDocuments(
       _limit: number
     ): Promise<KnowledgeDocumentSummary[]> {
-      // 仅提供一个简单可扩展的骨架，后续任务卡再补充过滤/分页细节
       const docs = await db.knowledgeDocument.findMany({
+        where: { deletedAt: null },
         orderBy: { createdAt: "desc" },
         take: _limit,
       });
@@ -192,6 +254,83 @@ export function createDocumentService(deps: DocumentServiceDeps) {
         status: d.status,
         createdAt: d.createdAt,
       }));
+    },
+
+    /**
+     * 文档管理列表：排除软删，支持按状态与标题/文件名搜索，分页。
+     */
+    async listKnowledgeDocuments(
+      params: ListKnowledgeDocumentsParams
+    ): Promise<ListKnowledgeDocumentsResult> {
+      const requestedPage = Math.max(1, Math.floor(params.page ?? 1));
+      const rawSize = params.pageSize ?? 15;
+      const pageSize = Math.min(Math.max(rawSize, 1), 50);
+      const search = params.search?.trim();
+
+      const where = {
+        deletedAt: null,
+        ...(params.status ? { status: params.status } : {}),
+        ...(search
+          ? {
+              OR: [
+                { title: { contains: search, mode: "insensitive" as const } },
+                { fileName: { contains: search, mode: "insensitive" as const } },
+              ],
+            }
+          : {}),
+      };
+
+      const total = await db.knowledgeDocument.count({ where });
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      const page = Math.min(requestedPage, totalPages);
+      const skip = (page - 1) * pageSize;
+
+      const docs = await db.knowledgeDocument.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: pageSize,
+        select: {
+          id: true,
+          title: true,
+          fileName: true,
+          fileType: true,
+          status: true,
+          processingError: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      const items = docs.map((d) => ({
+        id: d.id,
+        title: d.title,
+        fileName: d.fileName,
+        fileType: d.fileType,
+        status: d.status,
+        processingError: d.processingError ?? null,
+        createdAt: d.createdAt,
+        updatedAt: d.updatedAt,
+      }));
+
+      return { items, total, page, pageSize, totalPages };
+    },
+
+    async softDeleteKnowledgeDocument(
+      id: string
+    ): Promise<{ ok: true } | { ok: false; reason: "not_found" }> {
+      const existing = await db.knowledgeDocument.findFirst({
+        where: { id, deletedAt: null },
+        select: { id: true },
+      });
+      if (!existing) {
+        return { ok: false, reason: "not_found" };
+      }
+      await db.knowledgeDocument.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
+      return { ok: true };
     },
 
     /**
@@ -303,30 +442,48 @@ export function createDocumentService(deps: DocumentServiceDeps) {
           ) {
             await db.knowledgeDocument.update({
               where: { id: created.id },
-              data: { status: "failed", rawText: null },
+              data: {
+                status: "failed",
+                rawText: null,
+                processingError: PROCESSING_ERROR_EMPTY_TEXT,
+              },
             });
             console.error(
               `[documentService] Ingestion failed: empty/unusable text. docId=${created.id}`
             );
-            throw new DocumentUploadError(
-              "PROCESSING_FAILED",
-              "Document processing failed. Please try again."
-            );
+            return {
+              id: created.id,
+              title: created.title,
+              fileName: created.fileName,
+              fileType: created.fileType,
+              status: "failed",
+              createdAt: created.createdAt,
+              processingError: PROCESSING_ERROR_EMPTY_TEXT,
+            };
           }
 
           const chunks = chunkText(normalizedText);
           if (chunks.length === 0) {
             await db.knowledgeDocument.update({
               where: { id: created.id },
-              data: { status: "failed", rawText: null },
+              data: {
+                status: "failed",
+                rawText: null,
+                processingError: PROCESSING_ERROR_ZERO_CHUNKS,
+              },
             });
             console.error(
               `[documentService] Ingestion failed: produced zero chunks. docId=${created.id}`
             );
-            throw new DocumentUploadError(
-              "PROCESSING_FAILED",
-              "Document processing failed. Please try again."
-            );
+            return {
+              id: created.id,
+              title: created.title,
+              fileName: created.fileName,
+              fileType: created.fileType,
+              status: "failed",
+              createdAt: created.createdAt,
+              processingError: PROCESSING_ERROR_ZERO_CHUNKS,
+            };
           }
 
           await db.$transaction(async (tx) => {
@@ -358,11 +515,20 @@ export function createDocumentService(deps: DocumentServiceDeps) {
             createdAt: created.createdAt,
           };
         } catch (err) {
+          const detail =
+            err instanceof Error ? err.message : String(err);
+          const processingError = truncateProcessingError(
+            `处理过程异常：${detail}`
+          );
           // Ensure lifecycle ends in a deterministic state.
           try {
             await db.knowledgeDocument.update({
               where: { id: created.id },
-              data: { status: "failed", rawText: null },
+              data: {
+                status: "failed",
+                rawText: null,
+                processingError,
+              },
             });
           } catch {
             // Ignore secondary failures; original error will be logged.
@@ -374,10 +540,15 @@ export function createDocumentService(deps: DocumentServiceDeps) {
             )}`,
             err
           );
-          throw new DocumentUploadError(
-            "PROCESSING_FAILED",
-            "Document processing failed. Please try again."
-          );
+          return {
+            id: created.id,
+            title: created.title,
+            fileName: created.fileName,
+            fileType: created.fileType,
+            status: "failed",
+            createdAt: created.createdAt,
+            processingError,
+          };
         }
       } catch (err) {
         if (err instanceof DocumentUploadError) {

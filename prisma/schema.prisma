@@ -63,6 +63,10 @@ model KnowledgeDocument {
   storageKey String
   status     KnowledgeDocumentStatus  @default(uploaded)
   rawText    String?
+  /// 解析/入库失败时的可读原因（Demo 治理与走查）
+  processingError String?
+  /// 软删除：已删除文档不出现在列表与检索中
+  deletedAt       DateTime?
 
   uploadedById String?
   uploadedBy   User?                  @relation("KnowledgeDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
@@ -75,6 +79,7 @@ model KnowledgeDocument {
 
   @@index([uploadedById])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model DocumentChunk {
