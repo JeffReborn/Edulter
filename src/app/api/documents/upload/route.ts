@@ -52,12 +52,9 @@ export async function POST(req: Request) {
     const uploadFile = uploaded as UploadFileLike;
     const fileName = typeof uploadFile?.name === "string" ? uploadFile.name : "";
     const fileSize = typeof uploadFile?.size === "number" ? uploadFile.size : 0;
-    const fileArrayBufferFn =
-      typeof uploadFile?.arrayBuffer === "function"
-        ? uploadFile.arrayBuffer
-        : null;
+    const hasArrayBuffer = typeof uploadFile?.arrayBuffer === "function";
 
-    if (!fileName || fileSize <= 0 || !fileArrayBufferFn) {
+    if (!fileName || fileSize <= 0 || !hasArrayBuffer) {
       return jsonError("INVALID_FILE", "Invalid uploaded file.");
     }
 
@@ -77,7 +74,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const fileBuffer = Buffer.from(await fileArrayBufferFn());
+    // Keep method invocation bound to the original File/Blob object.
+    const fileBuffer = Buffer.from(await uploadFile.arrayBuffer());
 
     const documentService = createDocumentService({ db: prisma });
     const document = await documentService.uploadKnowledgeDocument({
@@ -97,6 +95,7 @@ export async function POST(req: Request) {
           fileType: document.fileType,
           status: document.status,
           createdAt: document.createdAt.toISOString(),
+          processingError: document.processingError ?? null,
         },
       },
     });

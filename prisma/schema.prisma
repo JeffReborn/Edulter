@@ -63,6 +63,10 @@ model KnowledgeDocument {
   storageKey String
   status     KnowledgeDocumentStatus  @default(uploaded)
   rawText    String?
+  /// 解析/入库失败时的可读原因（Demo 治理与走查）
+  processingError String?
+  /// 软删除：已删除文档不出现在列表与检索中
+  deletedAt       DateTime?
 
   uploadedById String?
   uploadedBy   User?                  @relation("KnowledgeDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
@@ -75,6 +79,7 @@ model KnowledgeDocument {
 
   @@index([uploadedById])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model DocumentChunk {
@@ -96,7 +101,7 @@ model DocumentChunk {
 
 model Client {
   id            String       @id @default(cuid())
-  displayName   String
+  displayName   String       @unique
   studentName   String?
   studentStage  String?
   targetCountry String?
@@ -141,9 +146,12 @@ model ConversationRecord {
 }
 
 model ClientProfile {
-  id                   String   @id @default(cuid())
+  id                   String    @id @default(cuid())
   clientId             String
   conversationRecordId  String
+  /** 每个客户至多一条为 true；历史版本为 false 且可设 supersededAt */
+  isCurrent            Boolean   @default(false)
+  supersededAt         DateTime?
   studentStage         String?
   targetCountry        String?
   targetProgram        String?
@@ -166,6 +174,7 @@ model ClientProfile {
   updatedAt DateTime @updatedAt
 
   @@index([clientId])
+  @@index([clientId, isCurrent])
   @@index([conversationRecordId])
   @@index([createdAt])
 }

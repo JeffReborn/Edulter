@@ -77,10 +77,27 @@ export async function POST(req: Request) {
 
     const clientDisplayName = clientDisplayNameRaw?.trim();
 
+    const clientIdRaw = (body as { clientId?: unknown }).clientId;
+    let clientId: string | undefined;
+    if (typeof clientIdRaw === "string") {
+      const t = clientIdRaw.trim();
+      if (t) clientId = t;
+    } else if (clientIdRaw !== undefined && clientIdRaw !== null) {
+      return jsonError(
+        "INVALID_INPUT",
+        "Field `clientId` must be a string when provided.",
+        400
+      );
+    }
+
     const profileService = createProfileService({ db: prisma, ai: aiClient });
     const result = await profileService.extractProfile({
       conversationText,
-      ...(clientDisplayName ? { clientDisplayName } : {}),
+      ...(clientId
+        ? { clientId }
+        : clientDisplayName
+          ? { clientDisplayName }
+          : {}),
     });
 
     let validated;
@@ -99,11 +116,15 @@ export async function POST(req: Request) {
   } catch (err) {
     if (err instanceof ProfileExtractionError) {
       const status =
-        err.code === "INVALID_INPUT"
+        err.code === "DISPLAY_NAME_TOO_SHORT" || err.code === "INVALID_INPUT"
           ? 400
-          : err.code === "PROFILE_SCHEMA_INVALID"
-            ? 500
-            : 500;
+          : err.code === "CLIENT_NOT_FOUND"
+            ? 404
+            : err.code === "CLIENT_DISPLAY_NAME_TAKEN"
+              ? 409
+              : err.code === "PROFILE_SCHEMA_INVALID"
+                ? 500
+                : 500;
       return jsonError(err.code, err.message, status);
     }
     const message = err instanceof Error ? err.message : "Unknown error";

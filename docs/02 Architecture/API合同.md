@@ -3,7 +3,7 @@
 状态：Draft  
 版本：v0.1  
 所属阶段：Demo  
-最后更新：2026-03-16
+最后更新：2026-03-21
 
 ---
 
@@ -97,8 +97,9 @@
 
 ### Documents
 - `POST /api/documents/upload`
-- `GET /api/documents`
-- `GET /api/documents/:id`
+- `GET /api/documents`（文档管理列表，支持分页与筛选）
+- `DELETE /api/documents/:id`（软删除，Demo 治理）
+- `GET /api/documents/:id`（契约保留，可选实现）
 
 ### QA
 - `POST /api/qa/ask`
@@ -112,6 +113,7 @@
 ### Clients
 - `GET /api/clients`
 - `GET /api/clients/:id`
+- `PATCH /api/clients/:id`
 
 ---
 
@@ -137,6 +139,7 @@
 - `document.fileType`
 - `document.status`
 - `document.createdAt`
+- `document.processingError`：当 `status` 为 `failed` 时可能返回可读失败原因；否则可为 `null`
 
 ### 文档状态建议值
 - `uploaded`
@@ -158,27 +161,71 @@ Demo 阶段可以先用简化处理流程，但从契约上仍应保留文档状
 ## 2. GET `/api/documents`
 
 ### 作用
-获取已上传文档列表。
+获取已上传文档列表，供 **文档管理页**（`/documents/manage`）等使用。  
+**不包含**已软删除文档（`deletedAt` 非空的不返回）。
 
-### 可选查询参数
-- `status`
-- `keyword`
+### 查询参数
 
-### 成功返回字段
-每个文档建议返回：
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `page` | 否 | 页码，从 **1** 开始；默认 `1`。须为正整数。 |
+| `pageSize` | 否 | 每页条数；默认 **15**，最大 **50**。须为正整数。 |
+| `q` | 否 | 按 **标题** 或 **文件名** 模糊匹配（不区分大小写）。 |
+| `status` | 否 | 按状态筛选：`uploaded` \| `processing` \| `ready` \| `failed`；传 `all` 或不传表示不限。 |
+
+### 成功响应结构
+
+- `data.documents`：当前页的文档数组。
+- `data.pagination`：分页元数据。
+  - `total`：符合当前筛选条件的总条数（不含软删）。
+  - `page`：当前实际页码（若请求的 `page` 超过总页数，服务端会 **钳制到最后一页**，并以本字段为准）。
+  - `pageSize`：本页大小。
+  - `totalPages`：总页数（至少为 `1`）。
+
+### `documents[]` 每项字段
+
 - `id`
 - `title`
 - `fileName`
-- `status`
-- `createdAt`
-- `updatedAt`
+- `fileType`（扩展名，如 `pdf`、`txt`）
+- `status`：`uploaded` \| `processing` \| `ready` \| `failed`
+- `processingError`：`string \| null`，失败时的可读原因
+- `createdAt`、`updatedAt`：ISO 8601 字符串
+
+### 失败错误码
+
+- `INVALID_QUERY`：非法的 `page` / `pageSize` / `status`
+- `DOCUMENT_LIST_FAILED`：服务端异常
 
 ### 当前说明
-这个接口用于文档管理页或文档列表区域展示。
+
+- 列表为 **服务端分页**，避免一次加载过多数据。
+- 与 `POST /api/documents/upload` 使用同一套文档状态语义；上传处理失败时 `processingError` 可被本接口读出并展示。
 
 ---
 
-## 3. GET `/api/documents/:id`
+## 3. DELETE `/api/documents/:id`
+
+### 作用
+对文档执行 **软删除**（设置 `deletedAt`）：后续列表与知识检索均不再包含该文档。  
+Demo 阶段不删除磁盘文件与 `document_chunks` 记录（可留待后续异步清理任务）。
+
+### 路径参数
+- `id`：文档 ID
+
+### 成功响应
+- `success`: `true`
+- `data.id`：已软删除的文档 ID
+
+### 失败错误码
+
+- `INVALID_ID`：缺少或非法的 `id`
+- `NOT_FOUND`：文档不存在或已删除
+- `DOCUMENT_DELETE_FAILED`：服务端异常
+
+---
+
+## 4. GET `/api/documents/:id`
 
 ### 作用
 获取单个文档详情。
@@ -203,7 +250,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
-## 4. POST `/api/qa/ask`
+## 5. POST `/api/qa/ask`
 
 ### 作用
 基于知识库进行问答。
@@ -242,17 +289,18 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
-## 5. POST `/api/profiles/extract`
+## 6. POST `/api/profiles/extract`
 
 ### 作用
-从聊天记录中提取客户画像，并创建或更新客户记录。
+从咨询文本中提取客户画像，并**新建**客户记录，或在请求携带 `clientId` 时对**既有客户**合并更新画像与摘要字段。
 
 ### 请求字段
 - `conversationText`：聊天记录全文，必填。表示**已标准化的咨询文本**，可来源于：
   - 手动粘贴聊天记录
   - 录音转写结果
   - OCR 识别结果
-- `clientDisplayName`：客户显示名，可选
+- `clientId`：客户 ID，**可选**。若提供：视为**更新画像**，仅按该 id 定位客户，**不再**按显示名匹配；若不存在则 **404**。
+- `clientDisplayName`：客户显示名，**可选**；**仅在新建流程中生效**（未提供 `clientId` 时）。若提供：须 **≥ 3** 个字符且**全库唯一**；若不提供：服务端生成唯一占位显示名。
 
 ### 成功返回字段
 
@@ -281,7 +329,10 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - `structuredJson`
 
 ### 失败错误码建议
-- `INVALID_INPUT`
+- `INVALID_INPUT`（HTTP 400）
+- `DISPLAY_NAME_TOO_SHORT`（HTTP 400）
+- `CLIENT_NOT_FOUND`（HTTP 404，更新流程）
+- `CLIENT_DISPLAY_NAME_TAKEN`（HTTP 409，显示名与已有客户冲突）
 - `PROFILE_EXTRACTION_FAILED`
 - `PROFILE_SCHEMA_INVALID`
 
@@ -289,13 +340,14 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - 必须返回 `client`
 - 必须返回 `profile`
 - profile 输出必须是稳定结构，而不是自由散文
+- `clients.displayName` 在数据库层**唯一**；新建/改名均需满足唯一与最短长度规则
 
 ### 当前说明
-这个接口是“聊天记录 → 客户画像 → 客户记录”链路的入口。
+这个接口是“聊天记录 → 客户画像 → 客户记录”链路的入口。新建与更新通过是否携带 `clientId` 分流；更新路径**以 id 为准**，避免同名误绑客户。
 
 ---
 
-## 6. POST `/api/followups/generate`
+## 7. POST `/api/followups/generate`
 
 ### 作用
 基于客户画像与聊天记录生成跟进消息。
@@ -338,7 +390,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
-## 7. GET `/api/clients`
+## 8. GET `/api/clients`
 
 ### 作用
 获取客户记录列表。
@@ -367,7 +419,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
-## 8. GET `/api/clients/:id`
+## 9. GET `/api/clients/:id`
 
 ### 作用
 获取单个客户详情。
@@ -417,6 +469,33 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ### 当前说明
 这个接口支撑客户详情页，帮助顾问回看客户信息、聊天内容和最近生成结果。
+
+---
+
+## 10. PATCH `/api/clients/:id`
+
+### 作用
+仅更新指定客户的 **`displayName`**，不改变画像与咨询记录等其他数据。
+
+### 路径参数
+- `id`：客户 ID
+
+### 请求体（JSON）
+- `displayName`：字符串，必填（trim 后须非空、满足最短长度 **≥ 3**、**全库唯一**）
+
+### 成功返回
+- `success: true`
+- `data`：更新后的客户摘要字段（至少包含 `id`、`displayName`、`updatedAt` 等，以实现为准）
+
+### 失败错误码建议
+- `INVALID_INPUT`（HTTP 400）：缺少字段、类型错误等
+- `DISPLAY_NAME_EMPTY` / `DISPLAY_NAME_TOO_SHORT`（HTTP 400）
+- `CLIENT_NOT_FOUND`（HTTP 404）
+- `DISPLAY_NAME_TAKEN`（HTTP 409，与他人显示名冲突）
+- `CLIENT_UPDATE_FAILED`（HTTP 500）
+
+### 当前说明
+用于客户列表内联改名等场景；与画像提取接口中的显示名校验规则一致（最短长度、唯一性）。
 
 ---
 
@@ -472,6 +551,8 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - 上传失败
 - 文件格式不支持
 - 文档处理失败
+- 文档列表加载失败（含非法分页/筛选参数）
+- 文档删除失败（含记录不存在或已删除）
 
 #### 问答相关
 - 输入无效
@@ -482,6 +563,8 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - 聊天记录为空
 - 画像提取失败
 - 画像结构不合法
+- 显示名过短、重名（`DISPLAY_NAME_TOO_SHORT`、`CLIENT_DISPLAY_NAME_TAKEN` 等）
+- 更新流程客户不存在（`CLIENT_NOT_FOUND`）
 
 #### 跟进消息相关
 - 客户不存在
@@ -490,6 +573,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 #### 客户记录相关
 - 客户不存在
+- 仅改名：显示名为空/过短、重名（`DISPLAY_NAME_EMPTY`、`DISPLAY_NAME_TOO_SHORT`、`DISPLAY_NAME_TAKEN` 等）
 
 ---
 
@@ -549,16 +633,18 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - `POST /api/followups/generate`
 
 ### P1 接口
-- `GET /api/documents`
+- `GET /api/documents`（含分页、搜索、状态筛选）
+- `DELETE /api/documents/:id`（软删除）
 - `GET /api/clients`
 - `GET /api/clients/:id`
+- `PATCH /api/clients/:id`
 
 ### P2 接口
 - `GET /api/documents/:id`
 
 说明：
 
-先把 AI 核心闭环打通，再补列表与详情类接口，会更符合当前 Demo 开发节奏。
+先把 AI 核心闭环打通，再补列表、治理与详情类接口，会更符合当前 Demo 开发节奏。
 
 ---
 

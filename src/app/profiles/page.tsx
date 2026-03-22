@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
+import { MIN_CLIENT_DISPLAY_NAME_LENGTH } from "@/lib/clientDisplayNameRules";
 import {
   Badge,
   Button,
@@ -141,12 +143,23 @@ function ListBlock({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-export default function ProfilesPage() {
+function ProfilesPageInner({
+  initialDisplayName,
+  isUpdateMode,
+  clientIdForUpdate,
+  updateLinkInvalid,
+}: {
+  initialDisplayName: string;
+  isUpdateMode: boolean;
+  clientIdForUpdate: string;
+  updateLinkInvalid: boolean;
+}) {
   const [state, setState] = useState<PageState>("idle");
-  const [clientDisplayName, setClientDisplayName] = useState("");
+  const [clientDisplayName, setClientDisplayName] = useState(initialDisplayName);
   const [conversationText, setConversationText] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [result, setResult] = useState<ProfileExtractSuccessData | null>(null);
+  const [lastSubmitHadDisplayName, setLastSubmitHadDisplayName] = useState(false);
 
   const isLoading = state === "loading";
 
@@ -157,7 +170,11 @@ export default function ProfilesPage() {
     const trimmedText = conversationText.trim();
     if (!trimmedText) {
       setState("error");
-      setErrorMessage("请先粘贴咨询文本后再提取画像。");
+      setErrorMessage(
+        isUpdateMode
+          ? "请先粘贴新的咨询文本后再更新画像。"
+          : "请先粘贴咨询文本后再提取画像。"
+      );
       setResult(null);
       return;
     }
@@ -167,15 +184,21 @@ export default function ProfilesPage() {
     setResult(null);
 
     const name = clientDisplayName.trim();
+    setLastSubmitHadDisplayName(isUpdateMode ? true : !!name);
+
+    const payload: { conversationText: string; clientId?: string; clientDisplayName?: string } =
+      { conversationText: trimmedText };
+    if (isUpdateMode && clientIdForUpdate) {
+      payload.clientId = clientIdForUpdate;
+    } else if (name) {
+      payload.clientDisplayName = name;
+    }
 
     try {
       const res = await fetch("/api/profiles/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          conversationText: trimmedText,
-          ...(name ? { clientDisplayName: name } : {}),
-        }),
+        body: JSON.stringify(payload),
       });
 
       const json = (await res.json()) as ProfileExtractApiResponse;
@@ -198,8 +221,14 @@ export default function ProfilesPage() {
     <main className="min-h-screen">
       <PageContainer>
         <PageHeader
-          title="客户画像提取"
-          description="粘贴咨询文本，系统将提取结构化客户画像，并写入客户记录。"
+          title={isUpdateMode ? "客户画像更新" : "新建客户画像"}
+          description={
+            updateLinkInvalid
+              ? "当前链接缺少客户标识，请从客户详情页点击「更新客户画像」重新进入。"
+              : isUpdateMode
+                ? "在已有客户与当前有效画像基础上，粘贴本轮咨询文本，系统将合并更新画像并保留历史版本。"
+                : "为尚未在列表中的客户建立首条画像。若客户已存在，请从客户列表进入详情后使用「更新客户画像」。"
+          }
           action={
             <Link
               href="/"
@@ -212,9 +241,19 @@ export default function ProfilesPage() {
 
         <Card className="max-w-5xl">
           <div className="space-y-6">
+            {updateLinkInvalid && (
+              <StatusMessage variant="error" title="无法更新画像">
+                请返回客户列表，进入具体客户详情页后，再点击「更新客户画像」。
+              </StatusMessage>
+            )}
+
             <SectionHeader
               title="输入咨询文本"
-              description="建议粘贴完整首咨聊天记录或顾问整理纪要；信息不足时系统会保守输出。"
+              description={
+                isUpdateMode
+                  ? "建议粘贴本轮新增或补充的聊天记录/纪要；系统会与当前有效画像合并，信息不足时仍保守输出。"
+                  : "建议粘贴完整首咨聊天记录或顾问整理纪要；信息不足时系统会保守输出。"
+              }
             />
 
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -224,17 +263,20 @@ export default function ProfilesPage() {
                     htmlFor="profiles-client-display-name"
                     className="text-sm font-medium text-[var(--color-text)]"
                   >
-                    客户显示名（可选）
+                    {isUpdateMode ? "客户显示名" : "客户显示名（可选）"}
                   </label>
                   <Input
                     id="profiles-client-display-name"
                     placeholder="例如：王女士 / 李同学家长"
                     value={clientDisplayName}
                     onChange={(e) => setClientDisplayName(e.target.value)}
-                    disabled={isLoading}
+                    disabled={isLoading || isUpdateMode}
+                    className={isUpdateMode ? "bg-[var(--color-border)]/30" : undefined}
                   />
                   <p className="text-xs text-[var(--color-text-muted)]">
-                    若填写，将按显示名精确匹配复用已有客户；不填则默认新建客户。
+                    {isUpdateMode
+                      ? "显示名仅作核对；更新操作已绑定当前客户 ID，与列表中的该客户一致。"
+                      : `可选。填写时至少 ${MIN_CLIENT_DISPLAY_NAME_LENGTH} 个字符；为避免重名可加日期（如 20260322）。可不填，系统将自动生成唯一显示名（如 未命名-日期-随机码），稍后可到客户列表点击编辑修改。`}
                   </p>
                 </div>
               </div>
@@ -259,11 +301,19 @@ export default function ProfilesPage() {
               <div className="flex items-center gap-3">
                 <Button
                   type="submit"
-                  disabled={!conversationText.trim() || isLoading}
+                  disabled={
+                    !conversationText.trim() || isLoading || updateLinkInvalid
+                  }
                   variant="primary"
                   className="min-w-[140px]"
                 >
-                  {isLoading ? "提取中…" : "提取画像"}
+                  {isLoading
+                    ? isUpdateMode
+                      ? "更新中…"
+                      : "提取中…"
+                    : isUpdateMode
+                      ? "更新画像"
+                      : "提取画像"}
                 </Button>
               </div>
             </form>
@@ -276,19 +326,35 @@ export default function ProfilesPage() {
                 />
               )}
 
-              {state === "loading" && <LoadingBlock message="正在提取客户画像并保存结果…" />}
+              {state === "loading" && (
+                <LoadingBlock
+                  message={
+                    isUpdateMode
+                      ? "正在合并更新客户画像并保存结果…"
+                      : "正在提取客户画像并保存结果…"
+                  }
+                />
+              )}
 
               {state === "error" && (
-                <StatusMessage variant="error" title="画像提取失败">
+                <StatusMessage variant="error" title={isUpdateMode ? "画像更新失败" : "画像提取失败"}>
                   {errorMessage}
                 </StatusMessage>
               )}
 
               {state === "success" && result && (
                 <div className="space-y-6">
-                  <StatusMessage variant="success" title="画像提取完成">
-                    已生成结构化画像，并完成客户记录写入。
+                  <StatusMessage variant="success" title={isUpdateMode ? "画像更新完成" : "画像提取完成"}>
+                    {isUpdateMode
+                      ? "已更新当前有效画像，历史版本已保留，并已写入本轮咨询记录。"
+                      : "已生成结构化画像，并完成客户记录写入。"}
                   </StatusMessage>
+
+                  {!isUpdateMode && !lastSubmitHadDisplayName && (
+                    <p className="text-sm text-[var(--color-text-muted)]">
+                      未手动填写显示名时，系统已自动生成唯一名称；可在客户列表中点击名称旁的编辑图标改为更好记的名称。
+                    </p>
+                  )}
 
                   <div className="grid gap-4 lg:grid-cols-3">
                     <Card className="bg-[var(--color-card-bg)] lg:col-span-1">
@@ -367,6 +433,40 @@ export default function ProfilesPage() {
         </Card>
       </PageContainer>
     </main>
+  );
+}
+
+function ProfilesSearchParamsBridge() {
+  const searchParams = useSearchParams();
+  const initialDisplayName = searchParams.get("displayName")?.trim() ?? "";
+  const wantsUpdate = searchParams.get("mode") === "update";
+  const clientIdForUpdate = searchParams.get("clientId")?.trim() ?? "";
+  const updateLinkInvalid = wantsUpdate && !clientIdForUpdate;
+  const isUpdateMode = wantsUpdate && !!clientIdForUpdate;
+  return (
+    <ProfilesPageInner
+      key={searchParams.toString()}
+      initialDisplayName={initialDisplayName}
+      isUpdateMode={isUpdateMode}
+      clientIdForUpdate={clientIdForUpdate}
+      updateLinkInvalid={updateLinkInvalid}
+    />
+  );
+}
+
+export default function ProfilesPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen">
+          <PageContainer>
+            <LoadingBlock message="加载页面…" />
+          </PageContainer>
+        </main>
+      }
+    >
+      <ProfilesSearchParamsBridge />
+    </Suspense>
   );
 }
 

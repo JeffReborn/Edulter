@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState, type FormEvent } from "react";
 import {
   Badge,
@@ -28,6 +29,7 @@ type UploadDocumentResponse =
           fileType: string;
           status: DocumentStatus;
           createdAt: string;
+          processingError?: string | null;
         };
       };
     }
@@ -143,6 +145,14 @@ export default function DocumentsPage() {
         <PageHeader
           title="文档上传"
           description="上传内部资料（txt/pdf），系统会提取文本并生成可用于问答的知识块。"
+          action={
+            <Link
+              href="/documents/manage"
+              className="inline-flex h-9 items-center justify-center rounded-md border border-[var(--color-border)] bg-white px-4 text-sm font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-page-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2"
+            >
+              文档管理
+            </Link>
+          }
         />
 
         <Card className="max-w-3xl">
@@ -244,9 +254,16 @@ export default function DocumentsPage() {
                       </div>
                     </div>
 
-                    <p className="text-sm text-[var(--color-text-muted)]">
-                      文档处理完成后即可用于后续知识问答。
-                    </p>
+                    {documentResult.status === "failed" &&
+                    documentResult.processingError ? (
+                      <StatusMessage variant="error" title="处理失败说明">
+                        {documentResult.processingError}
+                      </StatusMessage>
+                    ) : (
+                      <p className="text-sm text-[var(--color-text-muted)]">
+                        文档处理完成后即可用于后续知识问答。
+                      </p>
+                    )}
                   </div>
                 </Card>
               )}
