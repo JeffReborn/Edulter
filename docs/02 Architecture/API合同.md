@@ -3,7 +3,7 @@
 状态：Draft  
 版本：v0.1  
 所属阶段：Demo  
-最后更新：2026-03-19
+最后更新：2026-03-21
 
 ---
 
@@ -113,6 +113,7 @@
 ### Clients
 - `GET /api/clients`
 - `GET /api/clients/:id`
+- `PATCH /api/clients/:id`
 
 ---
 
@@ -291,14 +292,15 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 ## 6. POST `/api/profiles/extract`
 
 ### 作用
-从聊天记录中提取客户画像，并创建或更新客户记录。
+从咨询文本中提取客户画像，并**新建**客户记录，或在请求携带 `clientId` 时对**既有客户**合并更新画像与摘要字段。
 
 ### 请求字段
 - `conversationText`：聊天记录全文，必填。表示**已标准化的咨询文本**，可来源于：
   - 手动粘贴聊天记录
   - 录音转写结果
   - OCR 识别结果
-- `clientDisplayName`：客户显示名，可选
+- `clientId`：客户 ID，**可选**。若提供：视为**更新画像**，仅按该 id 定位客户，**不再**按显示名匹配；若不存在则 **404**。
+- `clientDisplayName`：客户显示名，**可选**；**仅在新建流程中生效**（未提供 `clientId` 时）。若提供：须 **≥ 3** 个字符且**全库唯一**；若不提供：服务端生成唯一占位显示名。
 
 ### 成功返回字段
 
@@ -327,7 +329,10 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - `structuredJson`
 
 ### 失败错误码建议
-- `INVALID_INPUT`
+- `INVALID_INPUT`（HTTP 400）
+- `DISPLAY_NAME_TOO_SHORT`（HTTP 400）
+- `CLIENT_NOT_FOUND`（HTTP 404，更新流程）
+- `CLIENT_DISPLAY_NAME_TAKEN`（HTTP 409，显示名与已有客户冲突）
 - `PROFILE_EXTRACTION_FAILED`
 - `PROFILE_SCHEMA_INVALID`
 
@@ -335,9 +340,10 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - 必须返回 `client`
 - 必须返回 `profile`
 - profile 输出必须是稳定结构，而不是自由散文
+- `clients.displayName` 在数据库层**唯一**；新建/改名均需满足唯一与最短长度规则
 
 ### 当前说明
-这个接口是“聊天记录 → 客户画像 → 客户记录”链路的入口。
+这个接口是“聊天记录 → 客户画像 → 客户记录”链路的入口。新建与更新通过是否携带 `clientId` 分流；更新路径**以 id 为准**，避免同名误绑客户。
 
 ---
 
@@ -466,6 +472,33 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 ---
 
+## 10. PATCH `/api/clients/:id`
+
+### 作用
+仅更新指定客户的 **`displayName`**，不改变画像与咨询记录等其他数据。
+
+### 路径参数
+- `id`：客户 ID
+
+### 请求体（JSON）
+- `displayName`：字符串，必填（trim 后须非空、满足最短长度 **≥ 3**、**全库唯一**）
+
+### 成功返回
+- `success: true`
+- `data`：更新后的客户摘要字段（至少包含 `id`、`displayName`、`updatedAt` 等，以实现为准）
+
+### 失败错误码建议
+- `INVALID_INPUT`（HTTP 400）：缺少字段、类型错误等
+- `DISPLAY_NAME_EMPTY` / `DISPLAY_NAME_TOO_SHORT`（HTTP 400）
+- `CLIENT_NOT_FOUND`（HTTP 404）
+- `DISPLAY_NAME_TAKEN`（HTTP 409，与他人显示名冲突）
+- `CLIENT_UPDATE_FAILED`（HTTP 500）
+
+### 当前说明
+用于客户列表内联改名等场景；与画像提取接口中的显示名校验规则一致（最短长度、唯一性）。
+
+---
+
 ## 七、输入校验建议
 
 ### 1. 所有 POST 接口必须做参数校验
@@ -530,6 +563,8 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - 聊天记录为空
 - 画像提取失败
 - 画像结构不合法
+- 显示名过短、重名（`DISPLAY_NAME_TOO_SHORT`、`CLIENT_DISPLAY_NAME_TAKEN` 等）
+- 更新流程客户不存在（`CLIENT_NOT_FOUND`）
 
 #### 跟进消息相关
 - 客户不存在
@@ -538,6 +573,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 
 #### 客户记录相关
 - 客户不存在
+- 仅改名：显示名为空/过短、重名（`DISPLAY_NAME_EMPTY`、`DISPLAY_NAME_TOO_SHORT`、`DISPLAY_NAME_TAKEN` 等）
 
 ---
 
@@ -601,6 +637,7 @@ Demo 阶段不一定要展示很复杂的文档详情，但应保留这个接口
 - `DELETE /api/documents/:id`（软删除）
 - `GET /api/clients`
 - `GET /api/clients/:id`
+- `PATCH /api/clients/:id`
 
 ### P2 接口
 - `GET /api/documents/:id`

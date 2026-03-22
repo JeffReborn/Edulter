@@ -204,20 +204,18 @@ export function createFollowupService(deps: FollowupServiceDeps) {
         throw new FollowupGenerationError("CLIENT_NOT_FOUND", "Client not found.");
       }
 
-      // Demo-stage selection rule: latest profile + most relevant conversation
-      const latestProfile = await db.clientProfile.findFirst({
-        where: { clientId },
-        orderBy: { createdAt: "desc" },
+      const currentProfile = await db.clientProfile.findFirst({
+        where: { clientId, isCurrent: true },
       });
-      if (!latestProfile) {
+      if (!currentProfile) {
         throw new FollowupGenerationError(
           "PROFILE_NOT_FOUND",
-          "No usable client profile found. Please extract profile first."
+          "No current client profile found. Please extract profile first."
         );
       }
 
       const conversationRecordId =
-        latestProfile.conversationRecordId ||
+        currentProfile.conversationRecordId ||
         (
           await db.conversationRecord.findFirst({
             where: { clientId },
@@ -247,63 +245,68 @@ export function createFollowupService(deps: FollowupServiceDeps) {
 
       const modelName = process.env.DEEPSEEK_MODEL_TEXT ?? "deepseek-chat";
 
-      // Generate one follow-up per style type, persist, then return DB ids.
+      const promptBase = {
+        client: {
+          id: client.id,
+          displayName: client.displayName,
+          studentStage: client.studentStage,
+          targetCountry: client.targetCountry,
+          budgetRange: client.budgetRange,
+          currentStage: client.currentStage,
+        },
+                profile: {
+                  studentStage: currentProfile.studentStage,
+                  targetCountry: currentProfile.targetCountry,
+                  targetProgram: currentProfile.targetProgram,
+                  budgetRange: currentProfile.budgetRange,
+                  timeline: currentProfile.timeline,
+                  englishLevel: currentProfile.englishLevel,
+                  parentGoals: currentProfile.parentGoals,
+                  mainConcerns: currentProfile.mainConcerns,
+                  riskFlags: currentProfile.riskFlags,
+                  currentStage: currentProfile.currentStage,
+                  structuredJson: currentProfile.structuredJson,
+                },
+        conversationText,
+      };
+
+      // 网络 LLM 调用不得放在 interactive $transaction 内：默认 5s 超时，多风格连调易超时。
+      const drafts: Array<{ styleType: FollowupStyleType; content: string }> = [];
+      for (const styleType of input.styleTypes) {
+        let content: string;
+        try {
+          const prompt = buildFollowupPrompt({
+            styleType,
+            ...promptBase,
+          });
+          const r = await ai.generate({ model: "followup", prompt });
+          content = normalizeText(r.rawText);
+        } catch (err) {
+          throw new FollowupGenerationError(
+            "FOLLOWUP_GENERATION_FAILED",
+            `AI followup generation failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            { cause: err }
+          );
+        }
+        if (!content) {
+          throw new FollowupGenerationError(
+            "FOLLOWUP_SCHEMA_INVALID",
+            "AI output is empty."
+          );
+        }
+        drafts.push({ styleType, content });
+      }
+
       try {
         const persisted = await db.$transaction(async (tx) => {
           const created: GeneratedFollowupItem[] = [];
-
-          for (const styleType of input.styleTypes) {
-            let content: string;
-            try {
-              const prompt = buildFollowupPrompt({
-                styleType,
-                client: {
-                  id: client.id,
-                  displayName: client.displayName,
-                  studentStage: client.studentStage,
-                  targetCountry: client.targetCountry,
-                  budgetRange: client.budgetRange,
-                  currentStage: client.currentStage,
-                },
-                profile: {
-                  studentStage: latestProfile.studentStage,
-                  targetCountry: latestProfile.targetCountry,
-                  targetProgram: latestProfile.targetProgram,
-                  budgetRange: latestProfile.budgetRange,
-                  timeline: latestProfile.timeline,
-                  englishLevel: latestProfile.englishLevel,
-                  parentGoals: latestProfile.parentGoals,
-                  mainConcerns: latestProfile.mainConcerns,
-                  riskFlags: latestProfile.riskFlags,
-                  currentStage: latestProfile.currentStage,
-                  structuredJson: latestProfile.structuredJson,
-                },
-                conversationText,
-              });
-
-              const r = await ai.generate({ model: "followup", prompt });
-              content = normalizeText(r.rawText);
-            } catch (err) {
-              throw new FollowupGenerationError(
-                "FOLLOWUP_GENERATION_FAILED",
-                `AI followup generation failed: ${
-                  err instanceof Error ? err.message : String(err)
-                }`,
-                { cause: err }
-              );
-            }
-
-            if (!content) {
-              throw new FollowupGenerationError(
-                "FOLLOWUP_SCHEMA_INVALID",
-                "AI output is empty."
-              );
-            }
-
+          for (const { styleType, content } of drafts) {
             const row = await tx.generatedFollowup.create({
               data: {
                 clientId: client.id,
-                profileId: latestProfile.id,
+                profileId: currentProfile.id,
                 conversationRecordId,
                 styleType,
                 content,
@@ -311,14 +314,12 @@ export function createFollowupService(deps: FollowupServiceDeps) {
                 promptVersion: PROMPT_VERSION,
               },
             });
-
             created.push({
               id: row.id,
               styleType,
               content: row.content,
             });
           }
-
           return created;
         });
 

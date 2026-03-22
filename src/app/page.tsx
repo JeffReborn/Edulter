@@ -21,7 +21,7 @@ type WorkbenchEntry = {
 };
 
 const STAGE_NOTE =
-  "Demo 阶段：文档上传与文档管理、知识问答、客户画像提取、跟进消息生成与客户记录列表均已可体验。";
+  "Demo 阶段：文档上传与文档管理、知识问答、新建客户画像、跟进消息生成与客户记录列表均已可体验。";
 
 export default function Home() {
   const router = useRouter();
@@ -44,8 +44,9 @@ export default function Home() {
       },
       {
         key: "profiles",
-        label: "客户画像提取",
-        description: "基于咨询文本提取结构化客户画像",
+        label: "新建客户画像",
+        description:
+          "为尚未入库的客户建立首条画像；已有客户请从客户列表进入详情后使用「更新客户画像」",
         href: "/profiles",
         status: "available",
       },

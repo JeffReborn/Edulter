@@ -67,7 +67,7 @@ function styleLabel(style: FollowupStyleType): string {
 
 function mapBusinessError(code: string): string | null {
   if (code === "PROFILE_NOT_FOUND") {
-    return "当前客户暂无可用画像，请先前往客户画像提取页完成画像提取，再生成跟进消息。";
+    return "当前客户暂无可用画像，请先「新建客户画像」或从客户详情「更新客户画像」，再生成跟进消息。";
   }
   if (code === "INSUFFICIENT_CONTEXT") {
     return "当前客户上下文不足，暂无法安全生成跟进草稿。请先补充咨询文本或更新画像后重试。";
@@ -224,7 +224,7 @@ export default function FollowupsPage() {
                   disabled={isLoading}
                 />
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  如遇“画像不存在”或“上下文不足”，请先到“客户画像提取”页补充数据。
+                  如遇“画像不存在”或“上下文不足”，请新建客户画像或从客户详情更新画像。
                 </p>
               </div>
 

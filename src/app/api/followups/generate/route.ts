@@ -107,7 +107,7 @@ export async function POST(req: Request) {
         if (e.code === "PROFILE_NOT_FOUND") {
           return jsonError(
             "PROFILE_NOT_FOUND",
-            "No usable client profile found. Please extract profile first.",
+            "未找到当前有效客户画像，请使用「新建客户画像」或从客户详情「更新客户画像」。",
             404
           );
         }

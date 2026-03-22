@@ -281,7 +281,7 @@ export default function ClientDetailPage() {
                 {!detail.latestConversationRecord ? (
                   <EmptyState
                     title="该客户暂未保存咨询内容"
-                    description="请先在客户画像提取页提交咨询文本。"
+                    description="请使用「新建客户画像」或在本页「更新客户画像」提交咨询文本。"
                   />
                 ) : (
                   <div className="space-y-3">
@@ -304,7 +304,7 @@ export default function ClientDetailPage() {
                 {!detail.latestProfile ? (
                   <EmptyState
                     title="该客户暂未生成画像"
-                    description="请先完成客户画像提取后再查看该区块。"
+                    description="请先完成新建或更新客户画像后再查看该区块。"
                   />
                 ) : (
                   <div className="space-y-4">
@@ -386,8 +386,10 @@ export default function ClientDetailPage() {
                   <Link href="/followups">
                     <Button variant="primary">进入跟进消息生成</Button>
                   </Link>
-                  <Link href="/profiles">
-                    <Button variant="secondary">进入客户画像提取</Button>
+                  <Link
+                    href={`/profiles?mode=update&clientId=${encodeURIComponent(detail.client.id)}&displayName=${encodeURIComponent(detail.client.displayName)}`}
+                  >
+                    <Button variant="secondary">更新客户画像</Button>
                   </Link>
                   <Link href="/clients">
                     <Button variant="ghost">返回客户列表</Button>

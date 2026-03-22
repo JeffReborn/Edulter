@@ -1,7 +1,11 @@
 import type { QaLogSelect } from "@/generated/prisma/models/QaLog";
 import type { DbClient } from "@/lib/db";
 import type { AiClient } from "@/lib/ai";
-import { createRetrievalService } from "@/server/services/retrievalService";
+import {
+  createRetrievalService,
+  minMatchScoreForCitations,
+  tokenizeForMatch,
+} from "@/server/services/retrievalService";
 import { generateText } from "@/lib/ai";
 
 export interface QaServiceDeps {
@@ -59,15 +63,15 @@ function toSnippet(content: string, maxLen: number = 300): string {
   return t.slice(0, maxLen) + "…";
 }
 
-/** 根据检索结果数量与得分决定 confidence */
+/** 根据「可引用」片段数量与得分决定 confidence（与出处列表一致，避免弱命中仍显示「中」）。 */
 function decideConfidence(
-  retrievedCount: number,
-  topScores: number[]
+  citedCount: number,
+  citedScores: number[]
 ): QaConfidence {
-  if (retrievedCount === 0 || topScores.length === 0) return "low";
-  const maxScore = Math.max(...topScores);
-  if (retrievedCount >= 3 && maxScore >= 2) return "high";
-  if (retrievedCount >= 1 && maxScore >= 1) return "medium";
+  if (citedCount === 0 || citedScores.length === 0) return "low";
+  const maxScore = Math.max(...citedScores);
+  if (citedCount >= 3 && maxScore >= 4) return "high";
+  if (citedCount >= 1 && maxScore >= 3) return "medium";
   return "low";
 }
 
@@ -92,6 +96,14 @@ export function createQaService(deps: QaServiceDeps) {
         };
       }
 
+      const questionTokenCount = tokenizeForMatch(question).length;
+      const minCiteScore = minMatchScoreForCitations(questionTokenCount);
+      const topScore = Math.max(...retrieved.map((r) => r.score ?? 0), 0);
+      const citedChunks =
+        topScore >= minCiteScore
+          ? retrieved.filter((r) => (r.score ?? 0) >= minCiteScore)
+          : [];
+
       const contextBlocks = retrieved.map(
         (r) => `[文档：${r.documentTitle}]\n${r.chunk.content}`
       );
@@ -109,21 +121,21 @@ export function createQaService(deps: QaServiceDeps) {
         );
       }
 
-      const citations: QaCitation[] = retrieved.map((r) => ({
+      const citations: QaCitation[] = citedChunks.map((r) => ({
         documentId: r.chunk.documentId,
         documentTitle: r.documentTitle,
         snippet: toSnippet(r.chunk.content),
       }));
 
       const confidence = decideConfidence(
-        retrieved.length,
-        retrieved.map((r) => r.score ?? 0)
+        citedChunks.length,
+        citedChunks.map((r) => r.score ?? 0)
       );
 
       const modelName = process.env.DEEPSEEK_MODEL_TEXT ?? "deepseek-chat";
 
       try {
-        const docIds = [...new Set(retrieved.map((r) => r.chunk.documentId))];
+        const docIds = [...new Set(citedChunks.map((r) => r.chunk.documentId))];
         await db.qaLog.create({
           data: {
             question,

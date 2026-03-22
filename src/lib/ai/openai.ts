@@ -4,6 +4,7 @@ import type {
   AiClient,
   AiGenerateParams,
   AiGenerateResult,
+  AiModelName,
 } from "@/lib/ai";
 
 type DeepSeekTextGenerateOptions = {
@@ -104,6 +105,20 @@ async function callChatCompletions(
   return contentUnknown.trim();
 }
 
+/** 画像/跟进等任务输出 JSON 或较长正文，默认 256 会导致截断与 JSON 解析失败。 */
+function defaultMaxTokensForModel(model: AiModelName): number {
+  switch (model) {
+    case "profile":
+      return 4096;
+    case "followup":
+      return 2048;
+    case "qa":
+      return 1024;
+    default:
+      return 512;
+  }
+}
+
 /**
  * Minimal reusable text-generation helper for server-only usage.
  * - Uses `DEEPSEEK_MODEL_TEXT`
@@ -144,7 +159,12 @@ class DeepSeekTextAiClient implements AiClient {
     // Demo stage: no model routing yet; all AiModelName routes use DEEPSEEK_MODEL_TEXT.
     // Note: any JSON parsing / outputSchema validation should be handled in upper-level services,
     // not inside this aiClient wrapper.
-    const rawText = await generateText(params.prompt);
+    const maxTokens =
+      params.maxTokens ?? defaultMaxTokensForModel(params.model);
+    const rawText = await generateText(params.prompt, {
+      temperature: 0,
+      maxTokens,
+    });
     return { rawText };
   }
 }
