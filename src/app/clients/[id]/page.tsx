@@ -383,7 +383,9 @@ export default function ClientDetailPage() {
               <div className="space-y-4">
                 <SectionHeader title="下一步操作" description="提供轻量入口，不进入复杂工作流系统。" />
                 <div className="flex flex-wrap items-center gap-2">
-                  <Link href="/followups">
+                  <Link
+                    href={`/followups?clientId=${encodeURIComponent(detail.client.id)}&displayName=${encodeURIComponent(detail.client.displayName)}`}
+                  >
                     <Button variant="primary">进入跟进消息生成</Button>
                   </Link>
                   <Link
