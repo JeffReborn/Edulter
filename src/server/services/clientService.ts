@@ -157,47 +157,50 @@ export function createClientService(_deps: ClientServiceDeps) {
         throw new Error("CLIENT_NOT_FOUND");
       }
 
-      const [latestConversationRecord, latestProfile, latestFollowups] =
-        await Promise.all([
-          db.conversationRecord.findFirst({
-            where: { clientId },
-            orderBy: { createdAt: "desc" },
-            select: {
-              id: true,
-              rawText: true,
-              createdAt: true,
-            },
-          }),
-          db.clientProfile.findFirst({
-            where: { clientId, isCurrent: true },
-            select: {
-              id: true,
-              studentStage: true,
-              targetCountry: true,
-              targetProgram: true,
-              budgetRange: true,
-              timeline: true,
-              englishLevel: true,
-              parentGoals: true,
-              mainConcerns: true,
-              riskFlags: true,
-              currentStage: true,
-              structuredJson: true,
-              createdAt: true,
-            },
-          }),
-          db.generatedFollowup.findMany({
-            where: { clientId },
-            orderBy: { createdAt: "desc" },
-            take: 5,
-            select: {
-              id: true,
-              styleType: true,
-              content: true,
-              createdAt: true,
-            },
-          }),
-        ]);
+      const [latestConversationRecord, latestProfile] = await Promise.all([
+        db.conversationRecord.findFirst({
+          where: { clientId },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            rawText: true,
+            createdAt: true,
+          },
+        }),
+        db.clientProfile.findFirst({
+          where: { clientId, isCurrent: true },
+          select: {
+            id: true,
+            studentStage: true,
+            targetCountry: true,
+            targetProgram: true,
+            budgetRange: true,
+            timeline: true,
+            englishLevel: true,
+            parentGoals: true,
+            mainConcerns: true,
+            riskFlags: true,
+            currentStage: true,
+            structuredJson: true,
+            createdAt: true,
+          },
+        }),
+      ]);
+
+      const latestFollowups = await db.generatedFollowup.findMany({
+        where: {
+          clientId,
+          ...(latestProfile?.id ? { profileId: latestProfile.id } : {}),
+        },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: {
+          id: true,
+          styleType: true,
+          content: true,
+          createdAt: true,
+        },
+      });
 
       return {
         client: {

@@ -301,6 +301,14 @@ export function createFollowupService(deps: FollowupServiceDeps) {
 
       try {
         const persisted = await db.$transaction(async (tx) => {
+          // 同 (clientId, profileId) 仅保留最新一批各风格草稿，避免无限追加
+          await tx.generatedFollowup.deleteMany({
+            where: {
+              clientId: client.id,
+              profileId: currentProfile.id,
+            },
+          });
+
           const created: GeneratedFollowupItem[] = [];
           for (const { styleType, content } of drafts) {
             const row = await tx.generatedFollowup.create({

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type FormEvent } from "react";
+import { Suspense, useMemo, useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 
 import {
   Badge,
@@ -96,9 +97,19 @@ async function copyText(text: string): Promise<void> {
   if (!ok) throw new Error("COPY_FAILED");
 }
 
-export default function FollowupsPage() {
+function FollowupsPageInner({
+  initialClientId,
+  contextDisplayName,
+  contextLinkInvalid,
+}: {
+  initialClientId: string;
+  contextDisplayName: string;
+  contextLinkInvalid: boolean;
+}) {
+  const fromClientDetail = !!initialClientId && !contextLinkInvalid;
+
   const [pageState, setPageState] = useState<FollowupPageState>("idle");
-  const [clientId, setClientId] = useState("");
+  const [clientId, setClientId] = useState(initialClientId);
   const [selectedStyles, setSelectedStyles] = useState<FollowupStyleType[]>([
     "wechat_short",
     "semi_formal",
@@ -110,8 +121,12 @@ export default function FollowupsPage() {
   const isLoading = pageState === "loading";
 
   const canSubmit = useMemo(
-    () => clientId.trim().length > 0 && selectedStyles.length > 0 && !isLoading,
-    [clientId, selectedStyles.length, isLoading]
+    () =>
+      clientId.trim().length > 0 &&
+      selectedStyles.length > 0 &&
+      !isLoading &&
+      !contextLinkInvalid,
+    [clientId, selectedStyles.length, isLoading, contextLinkInvalid]
   );
 
   function toggleStyle(style: FollowupStyleType) {
@@ -190,7 +205,13 @@ export default function FollowupsPage() {
       <PageContainer>
         <PageHeader
           title="跟进消息生成"
-          description="输入客户 ID 并选择风格，生成可复制的跟进消息草稿。"
+          description={
+            contextLinkInvalid
+              ? "当前链接缺少客户标识，请从客户详情页点击「进入跟进消息生成」重新进入。"
+              : fromClientDetail
+                ? `为「${contextDisplayName.trim() || initialClientId}」生成跟进草稿；客户 ID 已从详情页带入，可与列表中的该客户核对。`
+                : "输入客户 ID 并选择风格，生成可复制的跟进消息草稿。"
+          }
           action={
             <Link
               href="/"
@@ -205,10 +226,37 @@ export default function FollowupsPage() {
           <div className="space-y-6">
             <SectionHeader
               title="生成参数"
-              description="当前页面仅负责生成与复制草稿，不包含自动发送与流程自动化。"
+              description="当前页面仅负责生成与复制草稿，不包含自动发送与流程自动化。对同一客户、当前有效画像再次生成时，会替换该画像下已保存的上一轮草稿（本次所选各风格一并写入，不会无限堆积历史批次）。"
             />
 
+            {contextLinkInvalid && (
+              <StatusMessage variant="error" title="无法生成跟进草稿">
+                请返回客户列表，进入具体客户详情页后，再点击「进入跟进消息生成」。
+              </StatusMessage>
+            )}
+
             <form onSubmit={handleSubmit} className="space-y-5">
+              {fromClientDetail && contextDisplayName.trim() ? (
+                <div className="space-y-2">
+                  <label
+                    htmlFor="followups-context-display-name"
+                    className="text-sm font-medium text-[var(--color-text)]"
+                  >
+                    客户显示名
+                  </label>
+                  <Input
+                    id="followups-context-display-name"
+                    value={contextDisplayName.trim()}
+                    readOnly
+                    disabled={isLoading}
+                    className="bg-[var(--color-border)]/30"
+                  />
+                  <p className="text-xs text-[var(--color-text-muted)]">
+                    显示名仅作核对；生成操作已绑定下方客户 ID，与详情页该客户一致。
+                  </p>
+                </div>
+              ) : null}
+
               <div className="space-y-2">
                 <label
                   htmlFor="followups-client-id"
@@ -221,10 +269,15 @@ export default function FollowupsPage() {
                   placeholder="请输入客户 ID，例如：cm9z1xxxxxxx"
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value)}
-                  disabled={isLoading}
+                  disabled={isLoading || contextLinkInvalid || fromClientDetail}
+                  className={
+                    fromClientDetail ? "bg-[var(--color-border)]/30" : undefined
+                  }
                 />
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  如遇“画像不存在”或“上下文不足”，请新建客户画像或从客户详情更新画像。
+                  {fromClientDetail
+                    ? "客户 ID 已从详情页绑定；若需为其他客户生成，请从首页进入跟进消息生成或从对应客户详情重新进入。"
+                    : "如遇“画像不存在”或“上下文不足”，请新建客户画像或从客户详情更新画像。"}
                 </p>
               </div>
 
@@ -287,7 +340,20 @@ export default function FollowupsPage() {
               {pageState === "success" && result && (
                 <div className="space-y-4">
                   <StatusMessage variant="success" title="生成完成">
-                    已为客户 <code className="rounded bg-white px-1 py-0.5">{result.clientId}</code>{" "}
+                    已为
+                    {contextDisplayName.trim() &&
+                    result.clientId.trim() === initialClientId.trim() ? (
+                      <>
+                        客户「{contextDisplayName.trim()}」
+                        <code className="ml-1 rounded bg-white px-1 py-0.5">
+                          {result.clientId}
+                        </code>
+                      </>
+                    ) : (
+                      <>
+                        客户 <code className="rounded bg-white px-1 py-0.5">{result.clientId}</code>
+                      </>
+                    )}{" "}
                     生成 {result.followups.length} 条可复制草稿。
                   </StatusMessage>
 
@@ -324,6 +390,38 @@ export default function FollowupsPage() {
         </Card>
       </PageContainer>
     </main>
+  );
+}
+
+function FollowupsSearchParamsBridge() {
+  const searchParams = useSearchParams();
+  const initialClientId = searchParams.get("clientId")?.trim() ?? "";
+  const contextDisplayName = searchParams.get("displayName")?.trim() ?? "";
+  const contextLinkInvalid = !!contextDisplayName && !initialClientId;
+
+  return (
+    <FollowupsPageInner
+      key={searchParams.toString()}
+      initialClientId={initialClientId}
+      contextDisplayName={contextDisplayName}
+      contextLinkInvalid={contextLinkInvalid}
+    />
+  );
+}
+
+export default function FollowupsPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen">
+          <PageContainer>
+            <LoadingBlock message="加载页面…" />
+          </PageContainer>
+        </main>
+      }
+    >
+      <FollowupsSearchParamsBridge />
+    </Suspense>
   );
 }
 
