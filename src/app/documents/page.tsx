@@ -312,6 +312,10 @@ export default function DocumentsPage() {
 
       setUploadState("success");
       setDocumentResult(json.data.document);
+      setSelectedFile(null);
+      clearFileInput();
+      dragDepthRef.current = 0;
+      setDropActive(false);
     } catch {
       setUploadState("error");
       setErrorMessage("上传失败，请检查网络或稍后重试。");

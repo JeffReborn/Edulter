@@ -62,13 +62,45 @@ function confidenceLabel(c: Confidence): string {
   }
 }
 
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.style.position = "fixed";
+  textArea.style.opacity = "0";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(textArea);
+  if (!ok) throw new Error("COPY_FAILED");
+}
+
 export default function QaPage() {
   const [question, setQuestion] = useState("");
   const [state, setState] = useState<QaState>("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [result, setResult] = useState<QaSuccessData | null>(null);
+  const [answerCopied, setAnswerCopied] = useState(false);
 
   const isLoading = state === "loading";
+
+  async function handleCopyAnswer(text: string) {
+    try {
+      await copyText(text);
+      setAnswerCopied(true);
+      window.setTimeout(() => {
+        setAnswerCopied(false);
+      }, 1500);
+    } catch {
+      setState("error");
+      setErrorMessage("复制失败，请手动选中文本复制。");
+    }
+  }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -78,6 +110,7 @@ export default function QaPage() {
     setState("loading");
     setErrorMessage("");
     setResult(null);
+    setAnswerCopied(false);
 
     try {
       const res = await fetch("/api/qa/ask", {
@@ -187,20 +220,34 @@ export default function QaPage() {
                     </StatusMessage>
                   )}
 
-                  <div>
-                    <div className="mb-2 flex items-center gap-2">
-                      <span className="text-sm font-medium text-[var(--color-text)]">
-                        回答
-                      </span>
-                      <Badge variant={confidenceToBadgeVariant(result.confidence)}>
-                        置信度：{confidenceLabel(result.confidence)}
-                      </Badge>
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-[var(--color-text)]">
+                          回答
+                        </span>
+                        <Badge variant={confidenceToBadgeVariant(result.confidence)}>
+                          置信度：{confidenceLabel(result.confidence)}
+                        </Badge>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => void handleCopyAnswer(result.answer)}
+                      >
+                        复制回答
+                      </Button>
                     </div>
-                    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-card-bg)] px-4 py-3">
+
+                    <div className="rounded-md border border-[var(--color-border)] bg-white px-4 py-3">
                       <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--color-text)]">
                         {result.answer}
                       </p>
                     </div>
+
+                    {answerCopied && (
+                      <p className="text-xs text-green-700">已复制到剪贴板</p>
+                    )}
                   </div>
 
                   <div>

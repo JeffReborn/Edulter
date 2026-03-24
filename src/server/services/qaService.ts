@@ -35,6 +35,31 @@ export interface QaAnswer {
 const NO_CONTEXT_ANSWER =
   "当前知识库中未找到与您问题直接相关的资料依据，无法基于内部资料给出标准答案。建议换一种问法，或补充上传相关文档后再试。";
 
+/**
+ * 模型按 Prompt 给出「无法依据资料确定」类回答时，不再附带检索出处，避免与回答语义矛盾。
+ */
+function isConservativeUnableToAnswer(answer: string): boolean {
+  const t = answer.trim();
+  if (!t) return true;
+  const needles = [
+    "根据现有资料无法确定",
+    "根据现有资料，无法确定",
+    "根据现有资料无法",
+    "无法根据现有资料",
+    "参考资料不足以",
+    "资料不足以回答",
+    "不足以回答该问题",
+    "不足以回答此问题",
+    "未找到与您问题直接相关",
+    "无法基于内部资料",
+    "当前知识库中未找到",
+    "无法给出明确答案",
+    "无法给出标准答案",
+    "没有足够资料",
+  ];
+  return needles.some((n) => t.includes(n));
+}
+
 /** 构建问答 Prompt：仅依据上下文、不编造、依据不足时保守回答。 */
 function buildQaPrompt(question: string, contextBlocks: string[]): string {
   const contextSection =
@@ -104,7 +129,16 @@ export function createQaService(deps: QaServiceDeps) {
           ? retrieved.filter((r) => (r.score ?? 0) >= minCiteScore)
           : [];
 
-      const contextBlocks = retrieved.map(
+      // 与「可展示出处」同一门槛：弱命中不得进入模型上下文，否则易编造或与资料主题不符。
+      if (citedChunks.length === 0) {
+        return {
+          answer: NO_CONTEXT_ANSWER,
+          citations: [],
+          confidence: "low",
+        };
+      }
+
+      const contextBlocks = citedChunks.map(
         (r) => `[文档：${r.documentTitle}]\n${r.chunk.content}`
       );
       const prompt = buildQaPrompt(question, contextBlocks);
@@ -121,21 +155,26 @@ export function createQaService(deps: QaServiceDeps) {
         );
       }
 
-      const citations: QaCitation[] = citedChunks.map((r) => ({
+      let citations: QaCitation[] = citedChunks.map((r) => ({
         documentId: r.chunk.documentId,
         documentTitle: r.documentTitle,
         snippet: toSnippet(r.chunk.content),
       }));
 
-      const confidence = decideConfidence(
+      let confidence = decideConfidence(
         citedChunks.length,
         citedChunks.map((r) => r.score ?? 0)
       );
 
+      if (isConservativeUnableToAnswer(answerText)) {
+        citations = [];
+        confidence = "low";
+      }
+
       const modelName = process.env.DEEPSEEK_MODEL_TEXT ?? "deepseek-chat";
 
       try {
-        const docIds = [...new Set(citedChunks.map((r) => r.chunk.documentId))];
+        const docIds = [...new Set(citations.map((c) => c.documentId))];
         await db.qaLog.create({
           data: {
             question,
