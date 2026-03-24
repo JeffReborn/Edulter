@@ -50,6 +50,21 @@ export interface ClientListItem {
   hasFollowup: boolean;
 }
 
+export interface ListClientsPageParams {
+  page: number;
+  pageSize: number;
+  search?: string;
+  stage?: ClientStage;
+}
+
+export interface ListClientsPageResult {
+  clients: ClientListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 export interface ClientSummary {
   client: {
     id: string;
@@ -103,9 +118,46 @@ export function createClientService(_deps: ClientServiceDeps) {
   const { db } = _deps;
 
   return {
-    async listClients(): Promise<ClientListItem[]> {
+    async listClientsPage(
+      params: ListClientsPageParams
+    ): Promise<ListClientsPageResult> {
+      const requestedPage = Math.max(1, Math.floor(params.page));
+      const rawSize = params.pageSize;
+      const pageSize = Math.min(Math.max(rawSize, 1), 50);
+      const search = params.search?.trim();
+
+      const where = {
+        ...(params.stage ? { currentStage: params.stage } : {}),
+        ...(search
+          ? {
+              OR: [
+                {
+                  displayName: {
+                    contains: search,
+                    mode: "insensitive" as const,
+                  },
+                },
+                {
+                  studentName: {
+                    contains: search,
+                    mode: "insensitive" as const,
+                  },
+                },
+              ],
+            }
+          : {}),
+      };
+
+      const total = await db.client.count({ where });
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      const page = Math.min(requestedPage, totalPages);
+      const skip = (page - 1) * pageSize;
+
       const rows = await db.client.findMany({
+        where,
         orderBy: { updatedAt: "desc" },
+        skip,
+        take: pageSize,
         select: {
           id: true,
           displayName: true,
@@ -126,7 +178,7 @@ export function createClientService(_deps: ClientServiceDeps) {
         },
       });
 
-      return rows.map((row) => ({
+      const clients: ClientListItem[] = rows.map((row) => ({
         id: row.id,
         displayName: row.displayName,
         studentStage: row.studentStage,
@@ -136,6 +188,8 @@ export function createClientService(_deps: ClientServiceDeps) {
         hasProfile: row.profiles.length > 0,
         hasFollowup: row._count.generatedFollowups > 0,
       }));
+
+      return { clients, total, page, pageSize, totalPages };
     },
 
     async getClientSummary(clientId: string): Promise<ClientSummary> {
