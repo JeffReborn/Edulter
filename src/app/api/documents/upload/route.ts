@@ -11,6 +11,8 @@ function getErrorStatusCode(code: string) {
     case "INVALID_FILE":
     case "UNSUPPORTED_FILE_TYPE":
       return 400;
+    case "DUPLICATE_FILE_NAME":
+      return 409;
     case "UPLOAD_FAILED":
     case "PROCESSING_INIT_FAILED":
     case "PROCESSING_FAILED":
@@ -77,12 +79,19 @@ export async function POST(req: Request) {
     // Keep method invocation bound to the original File/Blob object.
     const fileBuffer = Buffer.from(await uploadFile.arrayBuffer());
 
+    const replaceRaw = formData.get("replaceExisting");
+    const replaceExisting =
+      replaceRaw === "true" ||
+      replaceRaw === "1" ||
+      replaceRaw === "on";
+
     const documentService = createDocumentService({ db: prisma });
     const document = await documentService.uploadKnowledgeDocument({
       title,
       fileName,
       fileType: ext,
       fileBuffer,
+      replaceExisting,
     });
 
     return NextResponse.json({

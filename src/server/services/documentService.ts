@@ -20,7 +20,8 @@ export type DocumentUploadErrorCode =
   | "UNSUPPORTED_FILE_TYPE"
   | "UPLOAD_FAILED"
   | "PROCESSING_INIT_FAILED"
-  | "PROCESSING_FAILED";
+  | "PROCESSING_FAILED"
+  | "DUPLICATE_FILE_NAME";
 
 export class DocumentUploadError extends Error {
   code: DocumentUploadErrorCode;
@@ -190,6 +191,8 @@ export interface UploadKnowledgeDocumentInput {
   fileType: string; // demo stage: extension (txt/pdf)
   fileBuffer: Buffer;
   uploadedById?: string;
+  /** 用户已确认覆盖同名文件时为 true */
+  replaceExisting?: boolean;
 }
 
 export interface UploadedKnowledgeDocument {
@@ -259,6 +262,35 @@ export function createDocumentService(deps: DocumentServiceDeps) {
     /**
      * 文档管理列表：排除软删，支持按状态与标题/文件名搜索，分页。
      */
+    /**
+     * 是否存在未软删的同名文件（不区分大小写），供上传前预检。
+     */
+    async findActiveDocumentByFileName(
+      fileName: string
+    ): Promise<{
+      id: string;
+      title: string;
+      fileName: string;
+      status: KnowledgeDocumentStatus;
+    } | null> {
+      const trimmed = fileName.trim();
+      if (!trimmed) return null;
+      const row = await db.knowledgeDocument.findFirst({
+        where: {
+          deletedAt: null,
+          fileName: { equals: trimmed, mode: "insensitive" },
+        },
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          title: true,
+          fileName: true,
+          status: true,
+        },
+      });
+      return row;
+    },
+
     async listKnowledgeDocuments(
       params: ListKnowledgeDocumentsParams
     ): Promise<ListKnowledgeDocumentsResult> {
@@ -344,7 +376,14 @@ export function createDocumentService(deps: DocumentServiceDeps) {
     async uploadKnowledgeDocument(
       input: UploadKnowledgeDocumentInput
     ): Promise<UploadedKnowledgeDocument> {
-      const { title, fileName, fileType, fileBuffer, uploadedById } = input;
+      const {
+        title,
+        fileName,
+        fileType,
+        fileBuffer,
+        uploadedById,
+        replaceExisting = false,
+      } = input;
 
       if (!fileName || !fileType) {
         throw new DocumentUploadError(
@@ -362,6 +401,20 @@ export function createDocumentService(deps: DocumentServiceDeps) {
 
       if (!fileBuffer || fileBuffer.byteLength === 0) {
         throw new DocumentUploadError("INVALID_FILE", "Uploaded file is empty.");
+      }
+
+      const nameDuplicate = await db.knowledgeDocument.findFirst({
+        where: {
+          deletedAt: null,
+          fileName: { equals: fileName, mode: "insensitive" },
+        },
+        select: { id: true },
+      });
+      if (nameDuplicate && !replaceExisting) {
+        throw new DocumentUploadError(
+          "DUPLICATE_FILE_NAME",
+          "知识库中已存在同名文件。若需用新文件替换，请先在页面确认覆盖后再上传。"
+        );
       }
 
       // Storage strategy (Demo fallback):
@@ -504,6 +557,21 @@ export function createDocumentService(deps: DocumentServiceDeps) {
               where: { id: created.id },
               data: { status: "ready", rawText: normalizedText },
             });
+
+            // 用户确认覆盖且新文档就绪后，软删其余同名未删文档
+            if (replaceExisting) {
+              await tx.knowledgeDocument.updateMany({
+                where: {
+                  deletedAt: null,
+                  id: { not: created.id },
+                  fileName: {
+                    equals: created.fileName,
+                    mode: "insensitive",
+                  },
+                },
+                data: { deletedAt: new Date() },
+              });
+            }
           });
 
           return {
